@@ -2,6 +2,7 @@
 
 // API base URL
 const API_BASE = '';
+const THEME_KEY = 'admin_theme';
 
 // API Key management
 function getApiKey() {
@@ -22,6 +23,34 @@ function clearApiKey() {
 function promptForApiKey() {
     // 重定向到登录页面
     window.location.href = '/admin/login';
+}
+
+function getTheme() {
+    return localStorage.getItem(THEME_KEY) || document.documentElement.dataset.theme || 'dark';
+}
+
+function setTheme(theme) {
+    document.documentElement.dataset.theme = theme;
+    localStorage.setItem(THEME_KEY, theme);
+    updateThemeToggleLabel();
+    if (lastTokensStats) {
+        updateTokensChart(lastTokensStats);
+    }
+}
+
+function toggleTheme() {
+    const nextTheme = getTheme() === 'dark' ? 'light' : 'dark';
+    setTheme(nextTheme);
+}
+
+function updateThemeToggleLabel() {
+    const toggle = document.getElementById('theme-toggle');
+    if (!toggle) return;
+    toggle.textContent = getTheme() === 'dark' ? '切换浅色' : '切换暗色';
+}
+
+function getCssVar(name) {
+    return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 }
 
 // Make authenticated request
@@ -89,6 +118,7 @@ function showSection(section, trigger = null) {
 
 // Chart instance
 let tokensChart = null;
+let lastTokensStats = null;
 
 // Format number with commas
 function formatNumber(num) {
@@ -164,6 +194,7 @@ async function loadDashboard() {
 
 // Update tokens chart
 function updateTokensChart(tokensStats) {
+    lastTokensStats = tokensStats;
     const ctx = document.getElementById('tokens-chart');
     if (!ctx) return;
     
@@ -190,24 +221,24 @@ function updateTokensChart(tokensStats) {
                 {
                     label: '输入 Tokens',
                     data: inputTokensData,
-                    borderColor: '#5bc7c8',
-                    backgroundColor: 'rgba(91, 199, 200, 0.14)',
+                    borderColor: getCssVar('--secondary'),
+                    backgroundColor: getCssVar('--secondary-soft'),
                     tension: 0.34,
                     fill: true
                 },
                 {
                     label: '输出 Tokens',
                     data: outputTokensData,
-                    borderColor: '#ef8baa',
-                    backgroundColor: 'rgba(239, 139, 170, 0.14)',
+                    borderColor: getCssVar('--warning'),
+                    backgroundColor: getCssVar('--warning-soft'),
                     tension: 0.34,
                     fill: true
                 },
                 {
                     label: '总 Tokens',
                     data: totalTokensData,
-                    borderColor: '#7b68ee',
-                    backgroundColor: 'rgba(123, 104, 238, 0.14)',
+                    borderColor: getCssVar('--primary'),
+                    backgroundColor: getCssVar('--primary-soft'),
                     tension: 0.34,
                     fill: true
                 }
@@ -222,14 +253,14 @@ function updateTokensChart(tokensStats) {
                     labels: {
                         usePointStyle: true,
                         boxWidth: 10,
-                        color: '#6d6383',
+                        color: getCssVar('--text-soft'),
                         padding: 18
                     }
                 },
                 tooltip: {
-                    backgroundColor: 'rgba(45, 35, 64, 0.92)',
-                    titleColor: '#ffffff',
-                    bodyColor: '#f7f3ff',
+                    backgroundColor: getTheme() === 'dark' ? 'rgba(8, 12, 18, 0.96)' : 'rgba(255, 255, 255, 0.96)',
+                    titleColor: getTheme() === 'dark' ? '#ffffff' : getCssVar('--text'),
+                    bodyColor: getTheme() === 'dark' ? '#dbe7f5' : getCssVar('--text-soft'),
                     padding: 12,
                     callbacks: {
                         label: function(context) {
@@ -244,16 +275,16 @@ function updateTokensChart(tokensStats) {
                         display: false
                     },
                     ticks: {
-                        color: '#9086a6'
+                        color: getCssVar('--text-faint')
                     }
                 },
                 y: {
                     beginAtZero: true,
                     grid: {
-                        color: 'rgba(126, 106, 170, 0.12)'
+                        color: getCssVar('--border')
                     },
                     ticks: {
-                        color: '#9086a6',
+                        color: getCssVar('--text-faint'),
                         callback: function(value) {
                             return formatLargeNumber(value);
                         }
@@ -764,6 +795,12 @@ document.querySelectorAll('.modal').forEach(modal => {
 
 // Load dashboard on page load
 document.addEventListener('DOMContentLoaded', () => {
+    updateThemeToggleLabel();
+    const themeToggle = document.getElementById('theme-toggle');
+    if (themeToggle) {
+        themeToggle.addEventListener('click', toggleTheme);
+    }
+
     const apiKey = getApiKey();
     if (!apiKey) {
         window.location.href = '/admin/login';

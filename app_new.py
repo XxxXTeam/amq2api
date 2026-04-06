@@ -41,6 +41,50 @@ logger = logging.getLogger(__name__)
 templates = Jinja2Templates(directory="app/web/templates")
 
 
+async def wrap_claude_sse_as_openai(claude_response: StreamingResponse):
+    """将 Claude SSE 事件流转换为 OpenAI chat.completion.chunk 格式。"""
+    import json
+
+    async for chunk in claude_response.body_iterator:
+        if not chunk:
+            continue
+
+        if isinstance(chunk, bytes):
+            chunk_text = chunk.decode("utf-8")
+        else:
+            chunk_text = chunk
+
+        event_type = None
+        for line in chunk_text.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+
+            if line.startswith("event: "):
+                event_type = line[7:].strip()
+                continue
+
+            if not line.startswith("data: "):
+                continue
+
+            data_str = line[6:].strip()
+            if data_str == "[DONE]":
+                continue
+
+            try:
+                event_data = json.loads(data_str)
+            except json.JSONDecodeError:
+                logger.warning(f"无法解析 Claude SSE 数据为 JSON: {data_str[:200]}")
+                continue
+
+            converted = convert_claude_to_openai_stream(
+                event_data,
+                event_type or event_data.get("type", "")
+            )
+            if converted:
+                yield converted
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""
@@ -744,8 +788,22 @@ async def create_chat_completion(request: Request, db: Session = Depends(get_db)
         if not is_stream:
             return await create_message_non_stream(fake_request, db, openai_request.get("model", "gpt-4"), api_key_info)
         
-        # 调用 Claude API 处理逻辑（流式）
-        return await create_message(fake_request, db)
+        # 先复用 Claude 流式处理，再包装成 OpenAI 标准 chunk 返回
+        claude_stream_response = await create_message(fake_request, db)
+        if not isinstance(claude_stream_response, StreamingResponse):
+            return claude_stream_response
+
+        response_headers = {
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+
+        return StreamingResponse(
+            wrap_claude_sse_as_openai(claude_stream_response),
+            media_type="text/event-stream",
+            headers=response_headers
+        )
     
     except HTTPException:
         raise

@@ -6,7 +6,14 @@
     <title>AMQ2API 管理面板</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet">
+    <script>
+        (() => {
+            const savedTheme = localStorage.getItem('admin_theme');
+            const theme = savedTheme || 'dark';
+            document.documentElement.dataset.theme = theme;
+        })();
+    </script>
     <link rel="stylesheet" href="{{ url_for('static', path='suki-ui.css') }}">
 </head>
 <body>
@@ -24,6 +31,7 @@
                     <span class="chip-dot"></span>
                     服务在线
                 </div>
+                <button id="theme-toggle" class="btn btn-ghost" type="button" aria-label="切换主题">切换浅色</button>
                 <button class="btn btn-secondary" type="button" onclick="loadDashboard()">刷新数据</button>
                 <button class="btn btn-danger" type="button" onclick="clearApiKey()">清除密钥</button>
             </div>
@@ -58,14 +66,59 @@
         <main class="content-column content-column-full">
             <section class="hero-panel glass-panel">
                 <div class="hero-copy">
-                    <span class="eyebrow">系统概览</span>
-                    <h2 class="hero-title">查看账号、密钥与近 7 天调用趋势。</h2>
-                    <p class="hero-description">常用操作放在前面，统计和表格保持清晰可读。</p>
+                    <span class="eyebrow">AMQ2API</span>
+                    <h2 class="hero-title">保持全局状态清晰，让常用操作更顺手。</h2>
+                    <p class="hero-description">在一个界面里处理账号池、访问密钥和调用趋势，信息层级更稳定，日常管理也更直接。</p>
                     <div class="hero-actions">
                         <button class="btn btn-primary" type="button" onclick="showSection('accounts', document.querySelector('[data-section=&quot;accounts&quot;]'))">管理账号池</button>
                         <button class="btn btn-secondary" type="button" onclick="showSection('apikeys', document.querySelector('[data-section=&quot;apikeys&quot;]'))">查看 API 密钥</button>
                     </div>
                 </div>
+                <aside class="hero-side">
+                    <div class="hero-side-card">
+                        <h3 class="hero-side-title">常用操作</h3>
+                        <div class="hero-side-list">
+                            <div class="hero-side-item">
+                                <div>
+                                    <strong>账号池维护</strong>
+                                    <span>导入、添加、刷新 Token</span>
+                                </div>
+                                <span class="hero-side-value">高频</span>
+                            </div>
+                            <div class="hero-side-item">
+                                <div>
+                                    <strong>密钥管理</strong>
+                                    <span>创建、吊销、删除访问密钥</span>
+                                </div>
+                                <span class="hero-side-value">安全</span>
+                            </div>
+                            <div class="hero-side-item">
+                                <div>
+                                    <strong>调用观察</strong>
+                                    <span>查看近 7 天趋势与贡献分布</span>
+                                </div>
+                                <span class="hero-side-value">统计</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="hero-side-card">
+                        <h3 class="hero-side-title">面板重点</h3>
+                        <div class="hero-side-list">
+                            <div class="hero-side-item">
+                                <div>
+                                    <strong>默认暗色</strong>
+                                    <span>减少眩光，适合长时间停留</span>
+                                </div>
+                            </div>
+                            <div class="hero-side-item">
+                                <div>
+                                    <strong>后台优先</strong>
+                                    <span>信息密度更高，视觉更克制</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </aside>
             </section>
 
             <section id="dashboard-section" class="section">
