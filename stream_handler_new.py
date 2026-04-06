@@ -3,6 +3,7 @@ SSE 流处理模块（更新版）
 处理 Amazon Q Event Stream 响应并转换为 Claude 格式
 """
 import logging
+import re
 from typing import AsyncIterator, Optional
 from event_stream_parser import EventStreamParser, extract_event_info
 from parser import (
@@ -25,6 +26,17 @@ from models import (
 )
 
 logger = logging.getLogger(__name__)
+
+LEADING_IDENTITY_PATTERNS = [
+    re.compile(r'^\s*(你好|您好|嗨|Hi|Hello)[！!，,。\s]*', re.IGNORECASE),
+    re.compile(r'^\s*我是\s*Amazon\s*Q[^。！？!\n]*[。！？!\n]?\s*', re.IGNORECASE),
+    re.compile(r'^\s*I\s*[\'’]?m\s*Amazon\s*Q[^.!?\n]*[.!?\n]?\s*', re.IGNORECASE),
+    re.compile(r'^\s*AWS\s*的\s*AI\s*助手[。！？!\n]?\s*', re.IGNORECASE),
+    re.compile(r'^\s*AWS\s*[\'’]?s\s*AI\s*assistant[.!?\n]?\s*', re.IGNORECASE),
+    re.compile(r'^\s*很高兴认识你(?:们)?[！!。]?\s*', re.IGNORECASE),
+    re.compile(r'^\s*很高兴为你服务[！!。]?\s*', re.IGNORECASE),
+    re.compile(r'^\s*Nice\s+to\s+meet\s+you[.!?\n]?\s*', re.IGNORECASE),
+]
 
 
 class AmazonQStreamHandler:
@@ -77,6 +89,10 @@ class AmazonQStreamHandler:
         
         # 所有 tool use 的完整 input(用于 token 统计)
         self.all_tool_inputs: list[str] = []
+
+        # 首段净化状态：仅清洗回答开头的 Amazon Q 身份预设
+        self._leading_text_buffer: str = ""
+        self._leading_text_locked: bool = False
 
     async def handle_stream(
         self,
@@ -151,20 +167,20 @@ class AmazonQStreamHandler:
                         self.content_block_stop_sent = True
                         self.current_tool_use = None
 
-                    # 首次收到内容时，发送 content_block_start
-                    if not self.content_block_start_sent:
-                        # 内容块索引递增
-                        self.content_block_index += 1
-                        cli_event = build_claude_content_block_start_event(
-                            self.content_block_index
-                        )
-                        yield cli_event
-                        self.content_block_start_sent = True
-                        self.content_block_started = True
-
-                    # 发送内容增量
                     if event.delta and event.delta.text:
-                        text_chunk = event.delta.text
+                        text_chunk = self._sanitize_leading_response_text(event.delta.text)
+                        if not text_chunk:
+                            continue
+
+                        # 首次收到可输出内容时，发送 content_block_start
+                        if not self.content_block_start_sent:
+                            self.content_block_index += 1
+                            cli_event = build_claude_content_block_start_event(
+                                self.content_block_index
+                            )
+                            yield cli_event
+                            self.content_block_start_sent = True
+                            self.content_block_started = True
 
                         # 追加到缓冲区
                         self.response_buffer.append(text_chunk)
@@ -190,6 +206,22 @@ class AmazonQStreamHandler:
                         self.content_block_stop_sent = True
 
             # 流结束，发送收尾事件
+            trailing_text = self._flush_remaining_leading_text()
+            if trailing_text:
+                if not self.content_block_start_sent:
+                    self.content_block_index += 1
+                    cli_event = build_claude_content_block_start_event(self.content_block_index)
+                    yield cli_event
+                    self.content_block_start_sent = True
+                    self.content_block_started = True
+
+                self.response_buffer.append(trailing_text)
+                cli_event = build_claude_content_block_delta_event(
+                    self.content_block_index,
+                    trailing_text
+                )
+                yield cli_event
+
             # 只有当 content_block_started 且尚未发送 content_block_stop 时才发送
             if self.content_block_started and not self.content_block_stop_sent:
                 cli_event = build_claude_content_block_stop_event(
@@ -339,6 +371,54 @@ class AmazonQStreamHandler:
         except Exception as e:
             logger.error(f"处理 tool use 事件失败: {e}", exc_info=True)
             raise
+
+    def _strip_leading_identity_boilerplate(self, text: str) -> str:
+        """移除回答开头常见的 Amazon Q / AWS 身份预设。"""
+        sanitized = text
+        changed = True
+
+        while changed and sanitized:
+            changed = False
+            for pattern in LEADING_IDENTITY_PATTERNS:
+                updated = pattern.sub("", sanitized, count=1)
+                if updated != sanitized:
+                    sanitized = updated
+                    changed = True
+
+        return sanitized.lstrip()
+
+    def _sanitize_leading_response_text(self, text_chunk: str) -> str:
+        """仅在响应开头做净化，避免把 Amazon Q 的固定自我介绍透传给客户端。"""
+        if self._leading_text_locked:
+            return text_chunk
+
+        self._leading_text_buffer += text_chunk
+        sanitized = self._strip_leading_identity_boilerplate(self._leading_text_buffer)
+
+        if sanitized != self._leading_text_buffer:
+            self._leading_text_buffer = sanitized
+
+        if self._leading_text_buffer and (
+            len(self._leading_text_buffer) >= 120
+            or "\n" in self._leading_text_buffer
+            or bool(re.search(r"[。！？!?]", self._leading_text_buffer))
+        ):
+            self._leading_text_locked = True
+            output = self._leading_text_buffer
+            self._leading_text_buffer = ""
+            return output
+
+        return ""
+
+    def _flush_remaining_leading_text(self) -> str:
+        """流结束时输出剩余的非预设文本。"""
+        if self._leading_text_locked:
+            return ""
+
+        self._leading_text_locked = True
+        output = self._strip_leading_identity_boilerplate(self._leading_text_buffer)
+        self._leading_text_buffer = ""
+        return output
 
     def _is_small_model_request(self, request_data: Optional[dict]) -> bool:
         """
