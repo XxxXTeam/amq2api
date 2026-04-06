@@ -598,130 +598,181 @@ async def upload_json_and_create_account(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"无效的 JSON 格式: {str(e)}"
             )
-        
-        # 提取字段
-        client_id = data.get("clientId")
-        refresh_token = data.get("refreshToken")
-        client_secret = data.get("clientSecret")
-        region = data.get("region")
-        
-        # 验证必需字段
-        if not client_id:
+
+        if isinstance(data, dict):
+            entries = [data]
+        elif isinstance(data, list):
+            if not data:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="JSON 数组为空，无法导入账号"
+                )
+            entries = data
+        else:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="JSON 文件中缺少 clientId 字段"
+                detail="JSON 顶层必须是对象或对象数组"
             )
-        
-        if not refresh_token:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="JSON 文件中缺少 refreshToken 字段"
+
+        normalized_entries = []
+        uploaded_client_ids = set()
+
+        for index, entry in enumerate(entries, start=1):
+            if not isinstance(entry, dict):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"第 {index} 条记录不是 JSON 对象"
+                )
+
+            client_id = entry.get("clientId")
+            refresh_token = entry.get("refreshToken")
+            client_secret = entry.get("clientSecret")
+            region = entry.get("region")
+
+            if not client_id:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"第 {index} 条记录缺少 clientId 字段"
+                )
+
+            if not refresh_token:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"第 {index} 条记录缺少 refreshToken 字段"
+                )
+
+            if not client_secret:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"第 {index} 条记录缺少 clientSecret 字段"
+                )
+
+            if client_id in uploaded_client_ids:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"上传文件中存在重复的 clientId: {client_id}"
+                )
+            uploaded_client_ids.add(client_id)
+
+            existing_account = db.query(Account).filter(Account.client_id == client_id).first()
+            if existing_account:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"账号已存在: {existing_account.name} (ID: {existing_account.id})"
+                )
+
+            normalized_entries.append({
+                "client_id": client_id,
+                "refresh_token": refresh_token,
+                "client_secret": client_secret,
+                "region": region
+            })
+
+        batch_import = len(normalized_entries) > 1
+        timestamp = datetime.now().strftime('%Y%m%d-%H%M%S')
+        base_notes = notes or f"从 JSON 文件自动添加 (文件: {json_file.filename})"
+
+        created_accounts = []
+        token_refresh_results = []
+
+        for index, entry in enumerate(normalized_entries, start=1):
+            account_name = name or f"AWS-SSO-{timestamp}-{index:02d}"
+            if name and batch_import:
+                account_name = f"{name}-{index:02d}"
+
+            account_profile_arn = profile_arn or entry["region"]
+
+            account = account_pool_manager.add_account(
+                db=db,
+                name=account_name,
+                refresh_token=entry["refresh_token"],
+                client_id=entry["client_id"],
+                client_secret=entry["client_secret"],
+                profile_arn=account_profile_arn,
+                requests_per_minute=requests_per_minute,
+                notes=base_notes
             )
-        
-        if not client_secret:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="JSON 文件中缺少 clientSecret 字段"
-            )
-        
-        # 检查是否已存在相同 client_id 的账号
-        existing_account = db.query(Account).filter(Account.client_id == client_id).first()
-        if existing_account:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"账号已存在: {existing_account.name} (ID: {existing_account.id})"
-            )
-        
-        # 如果没有提供名称，自动生成
-        if not name:
-            from datetime import datetime
-            name = f"AWS-SSO-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
-        
-        # 使用 region 作为 profile_arn（如果没有提供）
-        if not profile_arn:
-            profile_arn = region
-        
-        # 创建备注
-        if not notes:
-            notes = f"从 JSON 文件自动添加 (文件: {json_file.filename})"
-        
-        # 添加到账号池
-        account = account_pool_manager.add_account(
-            db=db,
-            name=name,
-            refresh_token=refresh_token,
-            client_id=client_id,
-            client_secret=client_secret,
-            profile_arn=profile_arn,
-            requests_per_minute=requests_per_minute,
-            notes=notes
-        )
-        
-        logger.info(f"从 JSON 文件添加账号: {account.name} (ID: {account.id})")
-        
-        # 立即刷新 token
-        try:
-            from app.core.redis_cache import delete_token_cache
-            # 删除旧的缓存（如果有）
-            delete_token_cache(str(account.id))
-            
-            # 刷新 token
-            token_data = await refresh_token_for_account(
-                account.refresh_token,
-                account.client_id,
-                account.client_secret,
-                account_id=str(account.id)
-            )
-            
-            # 更新账号健康状态
-            account_pool_manager.update_health_status(db, account.id, True, None)
-            
-            logger.info(f"账号 {account.name} token 刷新成功")
-            
-            return JSONResponse(content={
-                "success": True,
-                "message": f"账号 {account.name} 已成功添加并刷新 Token",
-                "account": {
-                    "id": account.id,
-                    "name": account.name,
-                    "client_id": account.client_id,
-                    "profile_arn": account.profile_arn,
-                    "is_active": account.is_active,
-                    "is_healthy": account.is_healthy,
-                    "created_at": account.created_at.isoformat()
-                },
-                "token_refresh": {
+
+            logger.info(f"从 JSON 文件添加账号: {account.name} (ID: {account.id})")
+            created_accounts.append(account)
+
+            try:
+                from app.core.redis_cache import delete_token_cache
+
+                delete_token_cache(str(account.id))
+                token_data = await refresh_token_for_account(
+                    account.refresh_token,
+                    account.client_id,
+                    account.client_secret,
+                    account_id=str(account.id)
+                )
+
+                account_pool_manager.update_health_status(db, account.id, True, None)
+                logger.info(f"账号 {account.name} token 刷新成功")
+
+                token_refresh_results.append({
+                    "account_id": account.id,
+                    "account_name": account.name,
                     "success": True,
                     "expires_in": token_data.get("expires_in")
-                }
-            })
-        
-        except Exception as e:
-            logger.error(f"账号 {account.name} token 刷新失败: {e}")
-            account_pool_manager.update_health_status(db, account.id, False, f"Token refresh failed: {str(e)}")
-            
-            # 即使 token 刷新失败，也返回账号创建成功的信息
-            return JSONResponse(
-                status_code=status.HTTP_201_CREATED,
-                content={
-                    "success": True,
-                    "message": f"账号 {account.name} 已成功添加，但 Token 刷新失败",
-                    "account": {
-                        "id": account.id,
-                        "name": account.name,
-                        "client_id": account.client_id,
-                        "profile_arn": account.profile_arn,
-                        "is_active": account.is_active,
-                        "is_healthy": account.is_healthy,
-                        "created_at": account.created_at.isoformat()
-                    },
-                    "token_refresh": {
-                        "success": False,
-                        "error": str(e)
-                    },
-                    "warning": "请手动刷新 Token"
-                }
-            )
+                })
+            except Exception as e:
+                logger.error(f"账号 {account.name} token 刷新失败: {e}")
+                account_pool_manager.update_health_status(db, account.id, False, f"Token refresh failed: {str(e)}")
+                token_refresh_results.append({
+                    "account_id": account.id,
+                    "account_name": account.name,
+                    "success": False,
+                    "error": str(e)
+                })
+
+        account_payloads = [
+            {
+                "id": account.id,
+                "name": account.name,
+                "client_id": account.client_id,
+                "profile_arn": account.profile_arn,
+                "is_active": account.is_active,
+                "is_healthy": account.is_healthy,
+                "created_at": account.created_at.isoformat()
+            }
+            for account in created_accounts
+        ]
+
+        failed_refreshes = [item for item in token_refresh_results if not item["success"]]
+        all_refresh_succeeded = not failed_refreshes
+        status_code = status.HTTP_201_CREATED if all_refresh_succeeded else status.HTTP_207_MULTI_STATUS
+
+        if len(account_payloads) == 1:
+            message = f"账号 {account_payloads[0]['name']} 已成功添加"
+            if all_refresh_succeeded:
+                message += "并刷新 Token"
+            else:
+                message += "，但 Token 刷新失败"
+        else:
+            message = f"成功导入 {len(account_payloads)} 个账号"
+            if all_refresh_succeeded:
+                message += "，并完成 Token 刷新"
+            else:
+                message += f"，其中 {len(failed_refreshes)} 个 Token 刷新失败"
+
+        response_content = {
+            "success": True,
+            "message": message,
+            "account": account_payloads[0],
+            "accounts": account_payloads,
+            "token_refresh": token_refresh_results[0] if len(token_refresh_results) == 1 else {
+                "success": all_refresh_succeeded,
+                "total": len(token_refresh_results),
+                "failed": len(failed_refreshes),
+                "results": token_refresh_results
+            }
+        }
+
+        if failed_refreshes:
+            response_content["warning"] = "部分账号已创建成功，但有 Token 刷新失败，请手动检查"
+
+        return JSONResponse(status_code=status_code, content=response_content)
     
     except HTTPException:
         raise

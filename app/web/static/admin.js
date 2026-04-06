@@ -509,14 +509,28 @@ document.getElementById('upload-json-form').addEventListener('submit', async (e)
         const result = await response.json();
         
         if (response.ok) {
-            alertDiv.innerHTML = '<div class="alert alert-success">账号添加成功！正在刷新 Token...</div>';
+            const importedAccounts = Array.isArray(result.accounts) ? result.accounts : (result.account ? [result.account] : []);
+            const failedRefreshes = Array.isArray(result.token_refresh?.results)
+                ? result.token_refresh.results.filter(item => !item.success).length
+                : (result.token_refresh?.success === false ? 1 : 0);
+
+            alertDiv.innerHTML = '<div class="alert alert-success">账号添加成功，正在同步列表...</div>';
             closeModal('upload-json-modal');
             e.target.reset();
             loadAccounts();
             
-            // 显示成功信息
             setTimeout(() => {
-                alert(`账号添加成功！\n\n账号名称: ${result.account.name}\n账号ID: ${result.account.id}\n\nToken 已自动刷新！`);
+                if (importedAccounts.length <= 1) {
+                    const account = importedAccounts[0];
+                    const tokenMessage = failedRefreshes > 0 ? 'Token 刷新失败，请手动检查。' : 'Token 已自动刷新！';
+                    alert(`账号添加成功！\n\n账号名称: ${account.name}\n账号ID: ${account.id}\n\n${tokenMessage}`);
+                    return;
+                }
+
+                const tokenSummary = failedRefreshes > 0
+                    ? `${failedRefreshes} 个账号 Token 刷新失败，请手动检查。`
+                    : '全部 Token 已自动刷新！';
+                alert(`批量导入成功！\n\n导入数量: ${importedAccounts.length}\n\n${tokenSummary}`);
             }, 500);
         } else {
             alertDiv.innerHTML = `<div class="alert alert-error">添加失败: ${result.detail || '未知错误'}</div>`;
