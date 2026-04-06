@@ -249,6 +249,47 @@ class AccountPoolManager:
                 logger.info(f"账号 {account.name} 错误计数: {account.error_count}/5（最近{error_window_minutes}分钟内，未达到异常阈值）")
         
         db.commit()
+
+    def mark_account_suspended(self, db: Session, account_id: int, error_message: str):
+        """将被上游临时封禁的账号立即标记为不可用。"""
+        account = db.query(Account).filter(Account.id == account_id).first()
+        if not account:
+            return
+
+        now = datetime.now()
+        account.is_active = False
+        account.is_healthy = False
+        account.error_count = max(account.error_count or 0, 5)
+        account.first_error_time = account.first_error_time or now
+        account.last_error_time = now
+        account.last_health_check = now
+        account.health_check_error = error_message
+        account.auto_recover_at = None
+        account.updated_at = now
+        db.commit()
+        logger.warning(f"账号 {account.name} 因上游 TEMPORARILY_SUSPENDED 被停用")
+
+    def cleanup_suspended_accounts(self, db: Session) -> List[Account]:
+        """删除所有被 403 暂停标记的账号。"""
+        suspended_accounts = db.query(Account).filter(
+            Account.health_check_error.isnot(None)
+        ).all()
+
+        matched_accounts = [
+            account for account in suspended_accounts
+            if "TEMPORARILY_SUSPENDED" in (account.health_check_error or "")
+            or "temporarily is suspended" in (account.health_check_error or "").lower()
+            or "AccessDeniedException" in (account.health_check_error or "")
+        ]
+
+        for account in matched_accounts:
+            logger.warning(f"清理 403 问题账号: {account.name}")
+            db.delete(account)
+
+        if matched_accounts:
+            db.commit()
+
+        return matched_accounts
     
     def record_success(self, db: Session, account_id: int):
         """记录成功请求，重置错误计数"""

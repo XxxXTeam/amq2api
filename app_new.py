@@ -41,6 +41,147 @@ logger = logging.getLogger(__name__)
 templates = Jinja2Templates(directory="app/web/templates")
 
 
+def is_temporarily_suspended_error(status_code: int, error_text: str) -> bool:
+    """判断上游 403 是否为临时封禁账号。"""
+    if status_code != 403:
+        return False
+
+    lowered = error_text.lower()
+    return (
+        "temporarily_suspended" in lowered
+        or "temporarily is suspended" in lowered
+        or "accessdeniedexception" in lowered
+    )
+
+
+def build_upstream_error_detail(error_text: str) -> str:
+    return f"上游 API 错误: {error_text}"
+
+
+def build_amazonq_headers(access_token: str) -> dict:
+    import uuid
+
+    return {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/x-amz-json-1.0",
+        "X-Amz-Target": "AmazonCodeWhispererStreamingService.GenerateAssistantResponse",
+        "User-Agent": "aws-sdk-rust/1.3.9 ua/2.1 api/codewhispererstreaming/0.1.11582 os/macos lang/rust/1.87.0 md/appVersion-1.19.3 app/AmazonQ-For-CLI",
+        "X-Amz-User-Agent": "aws-sdk-rust/1.3.9 ua/2.1 api/codewhispererstreaming/0.1.11582 os/macos lang/rust/1.87.0 m/F app/AmazonQ-For-CLI",
+        "X-Amzn-Codewhisperer-Optout": "true",
+        "Amz-Sdk-Request": "attempt=1; max=3",
+        "Amz-Sdk-Invocation-Id": str(uuid.uuid4()),
+        "Accept": "*/*",
+        "Accept-Encoding": "gzip, deflate, br"
+    }
+
+
+def build_final_request_for_account(claude_req: ClaudeRequest, account) -> dict:
+    """根据账号配置构建最终上游请求。"""
+    codewhisperer_req = convert_claude_to_codewhisperer_request(
+        claude_req,
+        conversation_id=None,
+        profile_arn=account.profile_arn
+    )
+
+    codewhisperer_dict = codewhisperer_request_to_dict(codewhisperer_req)
+    conversation_state = codewhisperer_dict.get("conversationState", {})
+    history = conversation_state.get("history", [])
+
+    if history:
+        processed_history = process_claude_history_for_amazonq(history)
+        conversation_state["history"] = processed_history
+        codewhisperer_dict["conversationState"] = conversation_state
+
+    return codewhisperer_dict
+
+
+async def open_upstream_stream_with_retry(db: Session, claude_req: ClaudeRequest):
+    """获取可用账号并打开上游流；若遇到被临时封禁账号则自动切换。"""
+    from auth import refresh_token_for_account
+
+    api_url = os.getenv("AMAZONQ_API_ENDPOINT", "https://q.us-east-1.amazonaws.com/").rstrip('/')
+    active_accounts = account_pool_manager.list_accounts(db, active_only=True)
+    max_attempts = max(len(active_accounts), 1)
+    attempted_account_ids = set()
+    last_error_detail = "没有可用账号"
+
+    for _ in range(max_attempts):
+        account = await account_pool_manager.get_next_account(db)
+        if not account:
+            break
+
+        if account.id in attempted_account_ids:
+            continue
+        attempted_account_ids.add(account.id)
+
+        final_request = build_final_request_for_account(claude_req, account)
+
+        try:
+            token_data = await refresh_token_for_account(
+                account.refresh_token,
+                account.client_id,
+                account.client_secret
+            )
+        except Exception as e:
+            logger.error(f"账号 {account.name} token 刷新失败: {e}")
+            account_pool_manager.update_health_status(
+                db, account.id, False, f"Token refresh failed: {str(e)}"
+            )
+            last_error_detail = f"账号 {account.name} 认证失败，请检查账号配置"
+            continue
+
+        access_token = token_data.get("access_token")
+        if not access_token:
+            account_pool_manager.update_health_status(
+                db, account.id, False, "Token refresh returned no access_token"
+            )
+            last_error_detail = f"账号 {account.name} 无法获取 access_token"
+            continue
+
+        auth_headers = build_amazonq_headers(access_token)
+        client = httpx.AsyncClient(timeout=300.0)
+        stream_context = client.stream(
+            "POST",
+            api_url,
+            json=final_request,
+            headers=auth_headers
+        )
+
+        try:
+            response = await stream_context.__aenter__()
+        except httpx.RequestError as e:
+            await client.aclose()
+            logger.error(f"请求错误: {e}")
+            raise HTTPException(status_code=502, detail=f"上游服务错误: {str(e)}")
+
+        if response.status_code == 200:
+            logger.info(f"使用账号 {account.name} 建立上游流成功")
+            return account, final_request, client, stream_context, response
+
+        error_text = (await response.aread()).decode(errors="replace")
+        await stream_context.__aexit__(None, None, None)
+        await client.aclose()
+
+        logger.error(f"账号 {account.name} 上游 API 错误: {response.status_code} {error_text}")
+        if is_temporarily_suspended_error(response.status_code, error_text):
+            account_pool_manager.mark_account_suspended(db, account.id, build_upstream_error_detail(error_text))
+            last_error_detail = f"账号 {account.name} 已被上游暂时封禁，已自动切换其他账号"
+            continue
+
+        account_pool_manager.update_health_status(
+            db, account.id, False, f"API error: {response.status_code} {error_text}"
+        )
+        raise HTTPException(
+            status_code=response.status_code,
+            detail=build_upstream_error_detail(error_text)
+        )
+
+    raise HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail=last_error_detail
+    )
+
+
 async def wrap_claude_sse_as_openai(claude_response: StreamingResponse):
     """将 Claude SSE 事件流转换为 OpenAI chat.completion.chunk 格式。"""
     import json
@@ -298,138 +439,28 @@ async def create_message(request: Request, db: Session = Depends(get_db)):
         # 转换为 ClaudeRequest 对象
         claude_req = parse_claude_request(request_data)
         
-        # 从账号池获取可用账号
-        account = await account_pool_manager.get_next_account(db)
-        if not account:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="No available accounts in pool"
-            )
-        
-        logger.info(f"使用账号: {account.name}")
-        
-        # 转换为 CodeWhisperer 请求
-        codewhisperer_req = convert_claude_to_codewhisperer_request(
-            claude_req,
-            conversation_id=None,
-            profile_arn=account.profile_arn
-        )
-        
-        # 转换为字典
-        codewhisperer_dict = codewhisperer_request_to_dict(codewhisperer_req)
         model = claude_req.model
         
-        # 处理历史记录
-        conversation_state = codewhisperer_dict.get("conversationState", {})
-        history = conversation_state.get("history", [])
-        
-        if history:
-            processed_history = process_claude_history_for_amazonq(history)
-            conversation_state["history"] = processed_history
-            codewhisperer_dict["conversationState"] = conversation_state
-        
-        final_request = codewhisperer_dict
-        
+        # 获取可用账号和已建立的上游流。这里先完成 403 探活，再开始向客户端输出，避免 response already started。
+        logger.info("正在发送请求到 Amazon Q...")
+        account, final_request, upstream_client, upstream_stream_context, upstream_response = await open_upstream_stream_with_retry(
+            db,
+            claude_req
+        )
+        logger.info(f"使用账号: {account.name}")
+
         # 调试：记录请求的关键信息（用于调试400错误）
         import json
-        logger.info(f"请求结构检查: conversationId={codewhisperer_dict.get('conversationState', {}).get('conversationId')}, "
-                    f"history_count={len(codewhisperer_dict.get('conversationState', {}).get('history', []))}, "
-                    f"has_userInputMessageContext={bool(codewhisperer_dict.get('conversationState', {}).get('currentMessage', {}).get('userInputMessage', {}).get('userInputMessageContext'))}, "
-                    f"has_envState={bool(codewhisperer_dict.get('conversationState', {}).get('currentMessage', {}).get('userInputMessage', {}).get('userInputMessageContext', {}).get('envState'))}, "
-                    f"modelId={codewhisperer_dict.get('conversationState', {}).get('currentMessage', {}).get('userInputMessage', {}).get('modelId')}")
-        # 记录完整请求体（用于调试400错误）
+        logger.info(f"请求结构检查: conversationId={final_request.get('conversationState', {}).get('conversationId')}, "
+                    f"history_count={len(final_request.get('conversationState', {}).get('history', []))}, "
+                    f"has_userInputMessageContext={bool(final_request.get('conversationState', {}).get('currentMessage', {}).get('userInputMessage', {}).get('userInputMessageContext'))}, "
+                    f"has_envState={bool(final_request.get('conversationState', {}).get('currentMessage', {}).get('userInputMessage', {}).get('userInputMessageContext', {}).get('envState'))}, "
+                    f"modelId={final_request.get('conversationState', {}).get('currentMessage', {}).get('userInputMessage', {}).get('modelId')}")
         try:
             request_json = json.dumps(final_request, ensure_ascii=False, indent=2)
             logger.info(f"完整请求体（前2000字符）:\n{request_json[:2000]}...")
         except Exception as e:
             logger.warning(f"无法序列化请求体: {e}")
-        
-        # 使用账号的token获取认证头
-        from auth import refresh_token_for_account
-        
-        # 为该账号获取token
-        try:
-            token_data = await refresh_token_for_account(
-                account.refresh_token,
-                account.client_id,
-                account.client_secret
-            )
-        except Exception as e:
-            logger.error(f"账号 {account.name} token 刷新失败: {e}")
-            # 标记账号不健康
-            account_pool_manager.update_health_status(
-                db, account.id, False, f"Token refresh failed: {str(e)}"
-            )
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail=f"账号 {account.name} 认证失败，请检查账号配置（refresh_token、client_id、client_secret）是否正确"
-            )
-        
-        access_token = token_data.get("access_token")
-        if not access_token:
-            # 标记账号不健康
-            account_pool_manager.update_health_status(
-                db, account.id, False, "Token refresh returned no access_token"
-            )
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"账号 {account.name} 无法获取 access_token"
-            )
-        
-        # 构建请求头
-        import uuid
-        auth_headers = {
-            "Authorization": f"Bearer {access_token}",
-            "Content-Type": "application/x-amz-json-1.0",
-            "X-Amz-Target": "AmazonCodeWhispererStreamingService.GenerateAssistantResponse",
-            "User-Agent": "aws-sdk-rust/1.3.9 ua/2.1 api/codewhispererstreaming/0.1.11582 os/macos lang/rust/1.87.0 md/appVersion-1.19.3 app/AmazonQ-For-CLI",
-            "X-Amz-User-Agent": "aws-sdk-rust/1.3.9 ua/2.1 api/codewhispererstreaming/0.1.11582 os/macos lang/rust/1.87.0 m/F app/AmazonQ-For-CLI",
-            "X-Amzn-Codewhisperer-Optout": "true",
-            "Amz-Sdk-Request": "attempt=1; max=3",
-            "Amz-Sdk-Invocation-Id": str(uuid.uuid4()),
-            "Accept": "*/*",
-            "Accept-Encoding": "gzip, deflate, br"
-        }
-        
-        # 发送请求到 Amazon Q
-        logger.info("正在发送请求到 Amazon Q...")
-        
-        # API URL
-        api_url = os.getenv("AMAZONQ_API_ENDPOINT", "https://q.us-east-1.amazonaws.com/").rstrip('/')
-        
-        # 创建字节流响应
-        async def byte_stream():
-            async with httpx.AsyncClient(timeout=300.0) as client:
-                try:
-                    async with client.stream(
-                        "POST",
-                        api_url,
-                        json=final_request,
-                        headers=auth_headers
-                    ) as response:
-                        if response.status_code != 200:
-                            error_text = await response.aread()
-                            logger.error(f"上游 API 错误: {response.status_code} {error_text}")
-                            # 标记账号不健康
-                            account_pool_manager.update_health_status(
-                                db, account.id, False, f"API error: {response.status_code}"
-                            )
-                            raise HTTPException(
-                                status_code=response.status_code,
-                                detail=f"上游 API 错误: {error_text.decode()}"
-                            )
-                        
-                        # 处理 Event Stream
-                        async for chunk in response.aiter_bytes():
-                            if chunk:
-                                yield chunk
-                
-                except httpx.RequestError as e:
-                    logger.error(f"请求错误: {e}")
-                    account_pool_manager.update_health_status(
-                        db, account.id, False, str(e)
-                    )
-                    raise HTTPException(status_code=502, detail=f"上游服务错误: {str(e)}")
         
         # 返回流式响应
         import json
@@ -444,6 +475,18 @@ async def create_message(request: Request, db: Session = Depends(get_db)):
         async def claude_stream():
             nonlocal input_tokens, output_tokens, last_event_data
             try:
+                async def byte_stream():
+                    try:
+                        async for chunk in upstream_response.aiter_bytes():
+                            if chunk:
+                                yield chunk
+                    except httpx.RequestError as e:
+                        logger.error(f"流式请求错误: {e}")
+                        account_pool_manager.update_health_status(
+                            db, account.id, False, str(e)
+                        )
+                        return
+
                 async for event in handle_amazonq_stream(byte_stream(), model=model, request_data=request_data):
                     # 尝试解析事件以获取 tokens 信息
                     if event.startswith("data: "):
@@ -458,6 +501,11 @@ async def create_message(request: Request, db: Session = Depends(get_db)):
                             pass
                     yield event
             finally:
+                try:
+                    await upstream_stream_context.__aexit__(None, None, None)
+                finally:
+                    await upstream_client.aclose()
+
                 # 流处理完成后记录使用日志
                 try:
                     response_time = time.time() - start_time
@@ -477,6 +525,7 @@ async def create_message(request: Request, db: Session = Depends(get_db)):
                     db.add(usage_log)
                     
                     # 更新账号统计
+                    account_pool_manager.record_success(db, account.id)
                     account.total_requests += 1
                     account.total_tokens += (input_tokens + output_tokens)
                     account.last_used = datetime.now()
@@ -524,155 +573,67 @@ async def create_message_non_stream(request: Request, db: Session, original_mode
         # 转换为 ClaudeRequest 对象
         claude_req = parse_claude_request(request_data)
         
-        # 从账号池获取可用账号
-        account = await account_pool_manager.get_next_account(db)
-        if not account:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="No available accounts in pool"
-            )
-        
-        logger.info(f"使用账号: {account.name}")
-        
-        # 转换为 CodeWhisperer 请求
-        codewhisperer_req = convert_claude_to_codewhisperer_request(
-            claude_req,
-            conversation_id=None,
-            profile_arn=account.profile_arn
-        )
-        
-        # 转换为字典
-        codewhisperer_dict = codewhisperer_request_to_dict(codewhisperer_req)
         model = claude_req.model
-        
-        # 处理历史记录
-        conversation_state = codewhisperer_dict.get("conversationState", {})
-        history = conversation_state.get("history", [])
-        
-        if history:
-            processed_history = process_claude_history_for_amazonq(history)
-            conversation_state["history"] = processed_history
-            codewhisperer_dict["conversationState"] = conversation_state
-        
-        final_request = codewhisperer_dict
-        
+        logger.info("正在发送请求到 Amazon Q...")
+        account, final_request, upstream_client, upstream_stream_context, upstream_response = await open_upstream_stream_with_retry(
+            db,
+            claude_req
+        )
+        logger.info(f"使用账号: {account.name}")
+
         # 调试：记录请求的关键信息（非流式，用于调试400错误）
         import json
-        logger.info(f"请求结构检查（非流）: conversationId={codewhisperer_dict.get('conversationState', {}).get('conversationId')}, "
-                    f"history_count={len(codewhisperer_dict.get('conversationState', {}).get('history', []))}, "
-                    f"has_userInputMessageContext={bool(codewhisperer_dict.get('conversationState', {}).get('currentMessage', {}).get('userInputMessage', {}).get('userInputMessageContext'))}, "
-                    f"has_envState={bool(codewhisperer_dict.get('conversationState', {}).get('currentMessage', {}).get('userInputMessage', {}).get('userInputMessageContext', {}).get('envState'))}, "
-                    f"modelId={codewhisperer_dict.get('conversationState', {}).get('currentMessage', {}).get('userInputMessage', {}).get('modelId')}")
-        # 记录完整请求体（用于调试400错误）
+        logger.info(f"请求结构检查（非流）: conversationId={final_request.get('conversationState', {}).get('conversationId')}, "
+                    f"history_count={len(final_request.get('conversationState', {}).get('history', []))}, "
+                    f"has_userInputMessageContext={bool(final_request.get('conversationState', {}).get('currentMessage', {}).get('userInputMessage', {}).get('userInputMessageContext'))}, "
+                    f"has_envState={bool(final_request.get('conversationState', {}).get('currentMessage', {}).get('userInputMessage', {}).get('userInputMessageContext', {}).get('envState'))}, "
+                    f"modelId={final_request.get('conversationState', {}).get('currentMessage', {}).get('userInputMessage', {}).get('modelId')}")
         try:
             request_json = json.dumps(final_request, ensure_ascii=False, indent=2)
             logger.info(f"完整请求体（非流，前2000字符）:\n{request_json[:2000]}...")
         except Exception as e:
             logger.warning(f"无法序列化请求体: {e}")
         
-        # 使用账号的token获取认证头
-        from auth import refresh_token_for_account
-        
-        # 为该账号获取token
-        try:
-            token_data = await refresh_token_for_account(
-                account.refresh_token,
-                account.client_id,
-                account.client_secret
-            )
-        except Exception as e:
-            logger.error(f"账号 {account.name} token 刷新失败: {e}")
-            account_pool_manager.update_health_status(
-                db, account.id, False, f"Token refresh failed: {str(e)}"
-            )
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail=f"账号 {account.name} 认证失败，请检查账号配置"
-            )
-        
-        access_token = token_data.get("access_token")
-        if not access_token:
-            account_pool_manager.update_health_status(
-                db, account.id, False, "Token refresh returned no access_token"
-            )
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"账号 {account.name} 无法获取 access_token"
-            )
-        
-        # 构建请求头
-        import uuid
-        auth_headers = {
-            "Authorization": f"Bearer {access_token}",
-            "Content-Type": "application/x-amz-json-1.0",
-            "X-Amz-Target": "AmazonCodeWhispererStreamingService.GenerateAssistantResponse",
-            "User-Agent": "aws-sdk-rust/1.3.9 ua/2.1 api/codewhispererstreaming/0.1.11582 os/macos lang/rust/1.87.0 md/appVersion-1.19.3 app/AmazonQ-For-CLI",
-            "X-Amz-User-Agent": "aws-sdk-rust/1.3.9 ua/2.1 api/codewhispererstreaming/0.1.11582 os/macos lang/rust/1.87.0 m/F app/AmazonQ-For-CLI",
-            "X-Amzn-Codewhisperer-Optout": "true",
-            "Amz-Sdk-Request": "attempt=1; max=3",
-            "Amz-Sdk-Invocation-Id": str(uuid.uuid4()),
-            "Accept": "*/*",
-            "Accept-Encoding": "gzip, deflate, br"
-        }
-        
-        # 发送请求到 Amazon Q
-        logger.info("正在发送请求到 Amazon Q...")
-        api_url = os.getenv("AMAZONQ_API_ENDPOINT", "https://q.us-east-1.amazonaws.com/").rstrip('/')
-        
         # 收集所有流事件
         claude_events = []
-        
+
         async def byte_stream():
-            async with httpx.AsyncClient(timeout=300.0) as client:
-                try:
-                    async with client.stream(
-                        "POST",
-                        api_url,
-                        json=final_request,
-                        headers=auth_headers
-                    ) as response:
-                        if response.status_code != 200:
-                            error_text = await response.aread()
-                            logger.error(f"上游 API 错误: {response.status_code} {error_text}")
-                            account_pool_manager.update_health_status(
-                                db, account.id, False, f"API error: {response.status_code}"
-                            )
-                            raise HTTPException(
-                                status_code=response.status_code,
-                                detail=f"上游 API 错误: {error_text.decode()}"
-                            )
-                        
-                        async for chunk in response.aiter_bytes():
-                            if chunk:
-                                yield chunk
-                
-                except httpx.RequestError as e:
-                    logger.error(f"请求错误: {e}")
-                    account_pool_manager.update_health_status(
-                        db, account.id, False, str(e)
-                    )
-                    raise HTTPException(status_code=502, detail=f"上游服务错误: {str(e)}")
-        
+            try:
+                async for chunk in upstream_response.aiter_bytes():
+                    if chunk:
+                        yield chunk
+            except httpx.RequestError as e:
+                logger.error(f"请求错误: {e}")
+                account_pool_manager.update_health_status(
+                    db, account.id, False, str(e)
+                )
+                raise HTTPException(status_code=502, detail=f"上游服务错误: {str(e)}")
+
         # 收集所有 SSE 事件
-        async for sse_event in handle_amazonq_stream(byte_stream(), model=model, request_data=request_data):
-            # 解析 SSE 事件（格式: "event: {type}\ndata: {json}\n\n"）
-            # 每个 sse_event 是一个完整的 SSE 事件字符串
-            lines = sse_event.strip().split('\n')
-            for line in lines:
-                line = line.strip()
-                if not line:
-                    continue
-                
-                if line.startswith("data: "):
-                    data_str = line[6:].strip()
-                    if data_str == "[DONE]":
-                        # 流结束
-                        break
-                    try:
-                        event_data = json.loads(data_str)
-                        claude_events.append(event_data)
-                    except json.JSONDecodeError:
+        try:
+            async for sse_event in handle_amazonq_stream(byte_stream(), model=model, request_data=request_data):
+                # 解析 SSE 事件（格式: "event: {type}\ndata: {json}\n\n"）
+                # 每个 sse_event 是一个完整的 SSE 事件字符串
+                lines = sse_event.strip().split('\n')
+                for line in lines:
+                    line = line.strip()
+                    if not line:
                         continue
+                    
+                    if line.startswith("data: "):
+                        data_str = line[6:].strip()
+                        if data_str == "[DONE]":
+                            break
+                        try:
+                            event_data = json.loads(data_str)
+                            claude_events.append(event_data)
+                        except json.JSONDecodeError:
+                            continue
+        finally:
+            try:
+                await upstream_stream_context.__aexit__(None, None, None)
+            finally:
+                await upstream_client.aclose()
         
         # 调试：记录收集到的事件
         logger.debug(f"收集到 {len(claude_events)} 个 Claude 事件")
@@ -715,6 +676,7 @@ async def create_message_non_stream(request: Request, db: Session, original_mode
             db.add(usage_log)
             
             # 更新账号统计
+            account_pool_manager.record_success(db, account.id)
             account.total_requests += 1
             account.total_tokens += (input_tokens + output_tokens)
             account.last_used = datetime.now()

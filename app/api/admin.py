@@ -186,6 +186,26 @@ def delete_account(
     return {"message": "Account deleted successfully"}
 
 
+@router.post("/accounts/cleanup-suspended")
+def cleanup_suspended_accounts(
+    db: Session = Depends(get_db),
+    admin_key: ApiKey = Depends(get_admin_api_key)
+):
+    """清理所有被 403 / TEMPORARILY_SUSPENDED 标记的问题账号"""
+    deleted_accounts = account_pool_manager.cleanup_suspended_accounts(db)
+    return {
+        "message": "Cleanup completed",
+        "deleted_count": len(deleted_accounts),
+        "deleted_accounts": [
+            {
+                "id": account.id,
+                "name": account.name
+            }
+            for account in deleted_accounts
+        ]
+    }
+
+
 # API Key endpoints
 @router.post("/api-keys", response_model=ApiKeyResponse)
 def create_api_key(

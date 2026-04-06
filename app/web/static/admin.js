@@ -381,6 +381,7 @@ async function loadAccounts() {
                                 <td>
                                     <span class="table-primary">${acc.name}</span>
                                     <span class="table-meta">ID: ${acc.id}</span>
+                                    ${acc.health_check_error ? `<span class="table-meta">${acc.health_check_error}</span>` : ''}
                                 </td>
                                 <td><span class="status-badge ${acc.is_active ? 'status-active' : 'status-inactive'}">
                                     ${acc.is_active ? '活跃' : '停用'}
@@ -658,6 +659,33 @@ async function deleteAccount(id) {
         }
     } catch (error) {
         alert('删除失败: ' + error.message);
+    }
+}
+
+async function cleanupSuspendedAccounts() {
+    if (!confirm('确定要清理所有 403 / TEMPORARILY_SUSPENDED 问题账号吗？此操作会直接删除这些账号。')) return;
+
+    try {
+        const response = await fetchWithAuth(`${API_BASE}/admin/accounts/cleanup-suspended`, {
+            method: 'POST'
+        });
+
+        const result = await response.json();
+        if (!response.ok) {
+            alert('清理失败: ' + (result.detail || '未知错误'));
+            return;
+        }
+
+        loadAccounts();
+        if (result.deleted_count > 0) {
+            const names = (result.deleted_accounts || []).map(item => item.name).join('、');
+            alert(`已清理 ${result.deleted_count} 个问题账号${names ? `：${names}` : ''}`);
+            return;
+        }
+
+        alert('没有检测到需要清理的 403 问题账号。');
+    } catch (error) {
+        alert('清理失败: ' + error.message);
     }
 }
 
