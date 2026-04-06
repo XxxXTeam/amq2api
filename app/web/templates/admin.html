@@ -19,12 +19,34 @@
 <body>
     <div class="page-shell">
         <header class="topbar glass-panel">
-            <div class="brand">
-                <div class="brand-mark">AM</div>
-                <div>
-                    <h1 class="brand-title">AMQ2API 管理后台</h1>
-                    <p class="brand-subtitle">账号池、API 密钥与调用统计管理</p>
+            <div class="topbar-main">
+                <div class="brand">
+                    <div class="brand-mark">AM</div>
+                    <div>
+                        <h1 class="brand-title">AMQ2API 管理后台</h1>
+                        <p class="brand-subtitle">账号池、API 密钥与调用统计</p>
+                    </div>
                 </div>
+                <nav class="topbar-nav" aria-label="管理导航">
+                    <a href="#dashboard" class="nav-link active" data-section="dashboard" onclick="showSection('dashboard', this); return false;">
+                        <span class="nav-link-label">
+                            <span class="nav-link-title">仪表盘</span>
+                            <span class="nav-link-copy">系统状态</span>
+                        </span>
+                    </a>
+                    <a href="#accounts" class="nav-link" data-section="accounts" onclick="showSection('accounts', this); return false;">
+                        <span class="nav-link-label">
+                            <span class="nav-link-title">账号管理</span>
+                            <span class="nav-link-copy">账号池与 Token</span>
+                        </span>
+                    </a>
+                    <a href="#apikeys" class="nav-link" data-section="apikeys" onclick="showSection('apikeys', this); return false;">
+                        <span class="nav-link-label">
+                            <span class="nav-link-title">API 密钥</span>
+                            <span class="nav-link-copy">创建与禁用</span>
+                        </span>
+                    </a>
+                </nav>
             </div>
             <div class="topbar-actions">
                 <div class="chip">
@@ -37,91 +59,33 @@
             </div>
         </header>
 
-        <nav class="top-nav glass-panel" aria-label="管理导航">
-            <div class="nav-list nav-list-top">
-                <a href="#dashboard" class="nav-link active" data-section="dashboard" onclick="showSection('dashboard', this); return false;">
-                    <span class="nav-link-label">
-                        <span class="nav-link-title">仪表盘</span>
-                        <span class="nav-link-copy">系统状态</span>
-                    </span>
-                    <span class="nav-badge">01</span>
-                </a>
-                <a href="#accounts" class="nav-link" data-section="accounts" onclick="showSection('accounts', this); return false;">
-                    <span class="nav-link-label">
-                        <span class="nav-link-title">账号管理</span>
-                        <span class="nav-link-copy">账号池与 Token</span>
-                    </span>
-                    <span class="nav-badge">02</span>
-                </a>
-                <a href="#apikeys" class="nav-link" data-section="apikeys" onclick="showSection('apikeys', this); return false;">
-                    <span class="nav-link-label">
-                        <span class="nav-link-title">API 密钥</span>
-                        <span class="nav-link-copy">创建与禁用</span>
-                    </span>
-                    <span class="nav-badge">03</span>
-                </a>
-            </div>
-        </nav>
-
         <main class="content-column content-column-full">
-            <section class="hero-panel glass-panel">
-                <div class="hero-copy">
-                    <span class="eyebrow">AMQ2API</span>
-                    <h2 class="hero-title">保持全局状态清晰，让常用操作更顺手。</h2>
-                    <p class="hero-description">在一个界面里处理账号池、访问密钥和调用趋势，信息层级更稳定，日常管理也更直接。</p>
-                    <div class="hero-actions">
-                        <button class="btn btn-primary" type="button" onclick="showSection('accounts', document.querySelector('[data-section=&quot;accounts&quot;]'))">管理账号池</button>
-                        <button class="btn btn-secondary" type="button" onclick="showSection('apikeys', document.querySelector('[data-section=&quot;apikeys&quot;]'))">查看 API 密钥</button>
-                    </div>
-                </div>
-                <aside class="hero-side">
-                    <div class="hero-side-card">
-                        <h3 class="hero-side-title">常用操作</h3>
-                        <div class="hero-side-list">
-                            <div class="hero-side-item">
-                                <div>
-                                    <strong>账号池维护</strong>
-                                    <span>导入、添加、刷新 Token</span>
-                                </div>
-                                <span class="hero-side-value">高频</span>
-                            </div>
-                            <div class="hero-side-item">
-                                <div>
-                                    <strong>密钥管理</strong>
-                                    <span>创建、吊销、删除访问密钥</span>
-                                </div>
-                                <span class="hero-side-value">安全</span>
-                            </div>
-                            <div class="hero-side-item">
-                                <div>
-                                    <strong>调用观察</strong>
-                                    <span>查看近 7 天趋势与贡献分布</span>
-                                </div>
-                                <span class="hero-side-value">统计</span>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="hero-side-card">
-                        <h3 class="hero-side-title">面板重点</h3>
-                        <div class="hero-side-list">
-                            <div class="hero-side-item">
-                                <div>
-                                    <strong>默认暗色</strong>
-                                    <span>减少眩光，适合长时间停留</span>
-                                </div>
-                            </div>
-                            <div class="hero-side-item">
-                                <div>
-                                    <strong>后台优先</strong>
-                                    <span>信息密度更高，视觉更克制</span>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </aside>
-            </section>
-
             <section id="dashboard-section" class="section">
+                <div class="overview-grid">
+                    <article class="card overview-card">
+                        <div class="card-header compact">
+                            <div>
+                                <h3 class="card-title">当前支持模型</h3>
+                                <p class="card-copy">代理当前对外声明的模型列表。</p>
+                            </div>
+                        </div>
+                        <div id="supported-models" class="model-chip-list"></div>
+                    </article>
+                    <article class="card overview-card">
+                        <div class="card-header compact">
+                            <div>
+                                <h3 class="card-title">快捷操作</h3>
+                                <p class="card-copy">高频管理动作直接进入。</p>
+                            </div>
+                        </div>
+                        <div class="quick-actions">
+                            <button class="btn btn-primary" type="button" onclick="showSection('accounts', document.querySelector('[data-section=&quot;accounts&quot;]'))">管理账号池</button>
+                            <button class="btn btn-secondary" type="button" onclick="showSection('apikeys', document.querySelector('[data-section=&quot;apikeys&quot;]'))">查看 API 密钥</button>
+                            <button class="btn btn-danger" type="button" onclick="cleanupSuspendedAccounts()">清理 403 账号</button>
+                        </div>
+                    </article>
+                </div>
+
                 <div class="stats-grid">
                     <article class="stat-card">
                         <h3>总账号数</h3>
@@ -132,8 +96,20 @@
                         <div class="value" id="active-accounts">-</div>
                     </article>
                     <article class="stat-card">
+                        <h3>健康账号</h3>
+                        <div class="value" id="healthy-accounts">-</div>
+                    </article>
+                    <article class="stat-card">
                         <h3>API 密钥数</h3>
                         <div class="value" id="total-keys">-</div>
+                    </article>
+                    <article class="stat-card">
+                        <h3>活跃密钥</h3>
+                        <div class="value" id="active-keys">-</div>
+                    </article>
+                    <article class="stat-card">
+                        <h3>支持模型数</h3>
+                        <div class="value" id="supported-model-count">-</div>
                     </article>
                     <article class="stat-card">
                         <h3>总请求数</h3>

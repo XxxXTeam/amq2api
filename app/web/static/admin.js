@@ -119,6 +119,8 @@ function showSection(section, trigger = null) {
 // Chart instance
 let tokensChart = null;
 let lastTokensStats = null;
+let supportedModels = [];
+const revealedKeys = new Set();
 
 // Format number with commas
 function formatNumber(num) {
@@ -153,21 +155,44 @@ async function readJsonSafely(response) {
     }
 }
 
+function updateSupportedModels(models) {
+    const container = document.getElementById('supported-models');
+    if (!container) return;
+
+    if (!models.length) {
+        container.innerHTML = '<div class="empty-state">当前没有可显示的模型。</div>';
+        return;
+    }
+
+    container.innerHTML = models.map(model => `
+        <span class="model-chip">
+            <span class="model-chip-name">${model.id}</span>
+            <span class="model-chip-meta">${model.owned_by || 'system'}</span>
+        </span>
+    `).join('');
+}
+
 // Load dashboard stats
 async function loadDashboard() {
     try {
-        const [accountStats, keyStats, tokensStats, accountUsageStats] = await Promise.all([
+        const [accountStats, keyStats, tokensStats, accountUsageStats, modelsResponse] = await Promise.all([
             fetchWithAuth(`${API_BASE}/admin/stats/accounts`).then(r => r.json()),
             fetchWithAuth(`${API_BASE}/admin/stats/api-keys`).then(r => r.json()),
             fetchWithAuth(`${API_BASE}/admin/stats/tokens?days=7`).then(r => r.json()),
-            fetchWithAuth(`${API_BASE}/admin/stats/account-usage?days=7`).then(r => r.json())
+            fetchWithAuth(`${API_BASE}/admin/stats/account-usage?days=7`).then(r => r.json()),
+            fetch(`${API_BASE}/v1/models`).then(r => r.json())
         ]);
         
         // Update basic stats
         document.getElementById('total-accounts').textContent = accountStats.total_accounts;
         document.getElementById('active-accounts').textContent = accountStats.active_accounts;
+        document.getElementById('healthy-accounts').textContent = accountStats.healthy_accounts;
         document.getElementById('total-keys').textContent = keyStats.total_keys;
+        document.getElementById('active-keys').textContent = keyStats.active_keys;
         document.getElementById('total-requests').textContent = formatNumber(accountStats.total_requests);
+        supportedModels = Array.isArray(modelsResponse.data) ? modelsResponse.data : [];
+        document.getElementById('supported-model-count').textContent = supportedModels.length;
+        updateSupportedModels(supportedModels);
         
         // Update tokens stats
         const totalInputTokens = tokensStats.total.input_tokens || 0;
@@ -427,6 +452,7 @@ async function loadApiKeys() {
                             <th>名称</th>
                             <th>密钥</th>
                             <th>状态</th>
+                            <th>类型</th>
                             <th>请求数</th>
                             <th>最后使用</th>
                             <th>过期时间</th>
@@ -440,10 +466,18 @@ async function loadApiKeys() {
                                     <span class="table-primary">${key.name}</span>
                                     <span class="table-meta">${key.is_admin ? '管理员密钥' : '普通密钥'}</span>
                                 </td>
-                                <td><span class="mono-chip"><code>${key.key}</code></span></td>
+                                <td>
+                                    <div class="key-cell">
+                                        <span class="mono-chip"><code>${maskApiKey(key.id, key.key)}</code></span>
+                                        <button class="icon-button" type="button" onclick="toggleKeyVisibility(${key.id})" aria-label="显示或隐藏密钥">
+                                            ${revealedKeys.has(key.id) ? '隐藏' : '查看'}
+                                        </button>
+                                    </div>
+                                </td>
                                 <td><span class="status-badge ${key.is_active ? 'status-active' : 'status-inactive'}">
                                     ${key.is_active ? '活跃' : '停用'}
                                 </span></td>
+                                <td>${key.is_admin ? '<span class="token-badge">管理员</span>' : '<span class="table-meta-inline">普通</span>'}</td>
                                 <td>${formatNumber(key.total_requests || 0)}</td>
                                 <td>${key.last_used ? new Date(key.last_used).toLocaleString('zh-CN') : '从未使用'}</td>
                                 <td>${key.expires_at ? new Date(key.expires_at).toLocaleString('zh-CN') : '永久'}</td>
@@ -463,6 +497,21 @@ async function loadApiKeys() {
     } catch (error) {
         console.error('Error loading API keys:', error);
     }
+}
+
+function maskApiKey(id, key) {
+    if (revealedKeys.has(id)) return key;
+    if (!key || key.length <= 8) return '••••••••';
+    return `${key.slice(0, 4)}••••••${key.slice(-4)}`;
+}
+
+function toggleKeyVisibility(id) {
+    if (revealedKeys.has(id)) {
+        revealedKeys.delete(id);
+    } else {
+        revealedKeys.add(id);
+    }
+    loadApiKeys();
 }
 
 // Modal functions
