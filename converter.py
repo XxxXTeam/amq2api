@@ -22,6 +22,41 @@ from models import (
 )
 
 logger = logging.getLogger(__name__)
+TOOL_RESULT_FALLBACK_TEXT = "Please continue based on the tool results."
+
+
+def normalize_tool_result_content(raw_content: Any) -> List[Dict[str, str]]:
+    """将 Claude 的 tool_result content 统一转换为 Amazon Q 需要的格式。"""
+    amazonq_content: List[Dict[str, str]] = []
+
+    if isinstance(raw_content, str):
+        amazonq_content = [{"text": raw_content}]
+    elif isinstance(raw_content, list):
+        for item in raw_content:
+            if isinstance(item, dict):
+                if item.get("type") == "text":
+                    amazonq_content.append({"text": item.get("text", "")})
+                elif "text" in item:
+                    amazonq_content.append({"text": item["text"]})
+                else:
+                    amazonq_content.append({"text": str(item)})
+            elif isinstance(item, str):
+                amazonq_content.append({"text": item})
+            else:
+                amazonq_content.append({"text": str(item)})
+
+    has_actual_content = any(item.get("text", "").strip() for item in amazonq_content)
+    if not has_actual_content:
+        return [{"text": "Tool use was cancelled by the user"}]
+
+    return amazonq_content
+
+
+def ensure_non_empty_tool_result_prompt(text: str, has_tool_result: bool) -> str:
+    """Amazon Q 对只有 tool_result 的消息不接受空 content，补一个最小提示。"""
+    if has_tool_result and not text.strip():
+        return TOOL_RESULT_FALLBACK_TEXT
+    return text
 
 
 def get_current_timestamp() -> str:
@@ -115,49 +150,9 @@ def convert_claude_to_codewhisperer_request(
                         if tool_results is None:
                             tool_results = []
 
-                        # 处理 tool_result 的 content
-                        # Claude API 格式: content 可能是字符串或数组
-                        # Amazon Q 格式: content 必须是 [{"text": "..."}]
-                        raw_content = block.get("content", [])
-
-                        # 统一转换为 Amazon Q 格式
-                        amazonq_content = []
-
-                        if isinstance(raw_content, str):
-                            # 字符串格式 -> 转换为 [{"text": "..."}]
-                            amazonq_content = [{"text": raw_content}]
-                        elif isinstance(raw_content, list):
-                            # 数组格式
-                            for item in raw_content:
-                                if isinstance(item, dict):
-                                    if "type" in item and item["type"] == "text":
-                                        # Claude 格式: {"type": "text", "text": "..."}
-                                        amazonq_content.append({"text": item.get("text", "")})
-                                    elif "text" in item:
-                                        # 已经是 Amazon Q 格式: {"text": "..."}
-                                        amazonq_content.append({"text": item["text"]})
-                                    else:
-                                        # 其他格式，尝试转换
-                                        amazonq_content.append({"text": str(item)})
-                                elif isinstance(item, str):
-                                    # 字符串元素
-                                    amazonq_content.append({"text": item})
-
-                        # 检查是否有实际内容
-                        has_actual_content = any(
-                            item.get("text", "").strip()
-                            for item in amazonq_content
-                        )
-
-                        # 如果没有实际内容，添加默认文本
-                        if not has_actual_content:
-                            amazonq_content = [
-                                {"text": "Tool use was cancelled by the user"}
-                            ]
-
                         tool_result = {
                             "toolUseId": block.get("tool_use_id"),
-                            "content": amazonq_content,  # 使用转换后的格式
+                            "content": normalize_tool_result_content(block.get("content", [])),
                             "status": block.get("status", "success")
                         }
                         tool_results.append(tool_result)
@@ -166,6 +161,7 @@ def convert_claude_to_codewhisperer_request(
             prompt_content = content
         else:
             prompt_content = extract_text_from_claude_content(content)
+        prompt_content = ensure_non_empty_tool_result_prompt(prompt_content, has_tool_result)
 
     # 步骤 4: 构建用户输入上下文
     user_context = UserInputMessageContext(
@@ -175,20 +171,14 @@ def convert_claude_to_codewhisperer_request(
     )
 
     # 步骤 5: 格式化内容（添加上下文信息）
-    # 只有在非 tool result 消息时才添加模板格式
-    if has_tool_result and not prompt_content:
-        # 如果是 tool result 且没有文本内容，使用空字符串
-        formatted_content = ""
-    else:
-        # 正常消息，添加模板格式
-        formatted_content = (
-            "--- CONTEXT ENTRY BEGIN ---\n"
-            f"Current time: {get_current_timestamp()}\n"
-            "--- CONTEXT ENTRY END ---\n\n"
-            "--- USER MESSAGE BEGIN ---\n"
-            f"{prompt_content}\n"
-            "--- USER MESSAGE END ---"
-        )
+    formatted_content = (
+        "--- CONTEXT ENTRY BEGIN ---\n"
+        f"Current time: {get_current_timestamp()}\n"
+        "--- CONTEXT ENTRY END ---\n\n"
+        "--- USER MESSAGE BEGIN ---\n"
+        f"{prompt_content}\n"
+        "--- USER MESSAGE END ---"
+    )
 
     # 如果有超长描述的工具，将完整描述添加到内容前面
     if long_description_tools:
@@ -293,42 +283,7 @@ def convert_history_messages(messages: List[Any]) -> List[Dict[str, Any]]:
                                 tool_results = []
 
                             tool_use_id = block.get("tool_use_id")
-                            raw_content = block.get("content", [])
-
-                            # 统一转换为 Amazon Q 格式
-                            amazonq_content = []
-
-                            if isinstance(raw_content, str):
-                                # 字符串格式 -> 转换为 [{"text": "..."}]
-                                amazonq_content = [{"text": raw_content}]
-                            elif isinstance(raw_content, list):
-                                # 数组格式
-                                for item in raw_content:
-                                    if isinstance(item, dict):
-                                        if "type" in item and item["type"] == "text":
-                                            # Claude 格式: {"type": "text", "text": "..."}
-                                            amazonq_content.append({"text": item.get("text", "")})
-                                        elif "text" in item:
-                                            # 已经是 Amazon Q 格式: {"text": "..."}
-                                            amazonq_content.append({"text": item["text"]})
-                                        else:
-                                            # 其他格式，尝试转换
-                                            amazonq_content.append({"text": str(item)})
-                                    elif isinstance(item, str):
-                                        # 字符串元素
-                                        amazonq_content.append({"text": item})
-
-                            # 检查是否有实际内容
-                            has_actual_content = any(
-                                item.get("text", "").strip()
-                                for item in amazonq_content
-                            )
-
-                            # 如果没有实际内容，添加默认文本
-                            if not has_actual_content:
-                                amazonq_content = [
-                                    {"text": "Tool use was cancelled by the user"}
-                                ]
+                            amazonq_content = normalize_tool_result_content(block.get("content", []))
 
                             # 查找是否已经存在相同 toolUseId 的结果
                             existing_result = None
@@ -352,6 +307,7 @@ def convert_history_messages(messages: List[Any]) -> List[Dict[str, Any]]:
                 text_content = "\n".join(text_parts)
             else:
                 text_content = extract_text_from_claude_content(content)
+            text_content = ensure_non_empty_tool_result_prompt(text_content, bool(tool_results))
 
             # 构建用户消息条目
             user_input_context = {

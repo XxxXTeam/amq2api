@@ -151,7 +151,7 @@ def test_only_tool_result_message():
     print("\n当前消息:")
     current = result['conversationState']['currentMessage']['userInputMessage']
     print(f"   Content: '{current['content']}'")
-    print(f"   Content is empty: {current['content'] == ''}")
+    print(f"   Uses fallback prompt: {'Please continue based on the tool results.' in current['content']}")
     print(f"   Has tool results: {'toolResults' in current['userInputMessageContext']}")
     if 'toolResults' in current['userInputMessageContext']:
         tool_results = current['userInputMessageContext']['toolResults']

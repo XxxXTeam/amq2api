@@ -62,7 +62,7 @@ def test_tool_result_handling():
 
     content = result['conversationState']['currentMessage']['userInputMessage']['content']
     print(f"Content: '{content}'")
-    print(f"Content is empty: {content == ''}")
+    print(f"Uses fallback prompt: {'Please continue based on the tool results.' in content}")
 
     tool_results = result['conversationState']['currentMessage']['userInputMessage']['userInputMessageContext'].get('toolResults')
     print(f"Has tool results: {tool_results is not None}")
