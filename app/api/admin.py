@@ -109,6 +109,48 @@ class ApiKeyResponse(BaseModel):
         from_attributes = True
 
 
+async def refresh_account_token_internal(db: Session, account: Account) -> dict:
+    """刷新单个账号 token，并同步更新账号健康状态。"""
+    from app.core.redis_cache import delete_token_cache
+
+    delete_token_cache(str(account.id))
+
+    try:
+        token_data = await refresh_token_for_account(
+            account.refresh_token,
+            account.client_id,
+            account.client_secret,
+            account_id=str(account.id)
+        )
+
+        account_pool_manager.update_health_status(db, account.id, True, None)
+        db.refresh(account)
+
+        return {
+            "success": True,
+            "account_id": account.id,
+            "account_name": account.name,
+            "is_active": account.is_active,
+            "is_healthy": account.is_healthy,
+            "expires_in": token_data.get("expires_in"),
+            "error": None
+        }
+    except Exception as e:
+        logger.error(f"刷新账号 {account.id} token 失败: {e}")
+        account_pool_manager.update_health_status(db, account.id, False, str(e))
+        db.refresh(account)
+
+        return {
+            "success": False,
+            "account_id": account.id,
+            "account_name": account.name,
+            "is_active": account.is_active,
+            "is_healthy": account.is_healthy,
+            "expires_in": None,
+            "error": str(e)
+        }
+
+
 # Account endpoints
 @router.post("/accounts", response_model=AccountResponse)
 def create_account(
@@ -489,55 +531,64 @@ def get_account_usage_stats(
 
 
 @router.post("/accounts/{account_id}/refresh-token")
-def refresh_account_token(
+async def refresh_account_token(
     account_id: int,
     db: Session = Depends(get_db),
     admin_key: ApiKey = Depends(get_admin_api_key)
 ):
     """主动刷新账号的 token"""
-    import asyncio
-    from auth import refresh_token_for_account
-    from app.core.redis_cache import delete_token_cache
-    
     account = account_pool_manager.get_account(db, account_id)
     if not account:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found")
-    
-    try:
-        # 删除旧的缓存
-        delete_token_cache(str(account_id))
-        
-        # 刷新 token
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            token_data = loop.run_until_complete(
-                refresh_token_for_account(
-                    account.refresh_token,
-                    account.client_id,
-                    account.client_secret,
-                    account_id=str(account_id)
-                )
-            )
-        finally:
-            loop.close()
-        
-        # 更新账号健康状态
-        account_pool_manager.update_health_status(db, account_id, True, None)
-        
-        return {
-            "message": "Token refreshed successfully",
-            "account_id": account_id,
-            "account_name": account.name,
-            "expires_in": token_data.get("expires_in")
-        }
-    except Exception as e:
-        logger.error(f"刷新账号 {account_id} token 失败: {e}")
-        account_pool_manager.update_health_status(db, account_id, False, str(e))
+
+    result = await refresh_account_token_internal(db, account)
+    if not result["success"]:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Token refresh failed: {str(e)}"
+            detail=f"Token refresh failed: {result['error']}"
         )
+
+    return {
+        "message": "Token refreshed successfully",
+        "account_id": result["account_id"],
+        "account_name": result["account_name"],
+        "expires_in": result["expires_in"],
+        "is_healthy": result["is_healthy"]
+    }
+
+
+@router.post("/accounts/refresh-all-tokens")
+async def refresh_all_account_tokens(
+    include_inactive: bool = True,
+    db: Session = Depends(get_db),
+    admin_key: ApiKey = Depends(get_admin_api_key)
+):
+    """批量刷新所有账号 token，便于快速判断哪些账号已经失效。"""
+    accounts = account_pool_manager.list_accounts(db, active_only=not include_inactive)
+    if not accounts:
+        return {
+            "message": "No accounts found",
+            "total": 0,
+            "success_count": 0,
+            "failed_count": 0,
+            "results": []
+        }
+
+    results = []
+    for account in accounts:
+        result = await refresh_account_token_internal(db, account)
+        results.append(result)
+
+    success_count = sum(1 for item in results if item["success"])
+    failed_count = len(results) - success_count
+
+    return {
+        "message": "Bulk token refresh completed",
+        "total": len(results),
+        "success_count": success_count,
+        "failed_count": failed_count,
+        "results": results
+    }
 
 
 @router.get("/accounts/{account_id}/stats")

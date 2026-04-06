@@ -798,6 +798,43 @@ async function refreshAccountToken(id) {
     }
 }
 
+async function refreshAllAccountTokens() {
+    if (!confirm('确定要一键刷新全部账号的 Token 吗？这会逐个验证账号是否还能成功换取 access token。')) return;
+
+    try {
+        const response = await fetchWithAuth(`${API_BASE}/admin/accounts/refresh-all-tokens`, {
+            method: 'POST'
+        });
+        const result = await readJsonSafely(response);
+
+        if (!response.ok) {
+            alert('批量刷新失败: ' + (result?.detail || '未知错误'));
+            return;
+        }
+
+        await loadAccounts();
+
+        const failedItems = Array.isArray(result?.results)
+            ? result.results.filter(item => !item.success)
+            : [];
+
+        if (!failedItems.length) {
+            alert(`批量刷新完成！\n\n总账号数: ${result.total}\n成功: ${result.success_count}\n失败: ${result.failed_count}\n\n所有账号都能成功刷新 Token。`);
+            return;
+        }
+
+        const failedSummary = failedItems
+            .map(item => `- ${item.account_name} (#${item.account_id}): ${item.error || '未知错误'}`)
+            .join('\n');
+
+        alert(
+            `批量刷新完成！\n\n总账号数: ${result.total}\n成功: ${result.success_count}\n失败: ${result.failed_count}\n\n以下账号疑似已失效或配置异常：\n${failedSummary}`
+        );
+    } catch (error) {
+        alert('批量刷新失败: ' + error.message);
+    }
+}
+
 // View account statistics
 async function viewAccountStats(id) {
     try {
