@@ -61,22 +61,23 @@ function handleAuthError(error) {
 }
 
 // Show/hide sections
-function showSection(section) {
-    // Hide all sections
+function showSection(section, trigger = null) {
     document.querySelectorAll('.section').forEach(el => {
         el.style.display = 'none';
     });
-    
-    // Update nav links
+
     document.querySelectorAll('.nav-link').forEach(el => {
         el.classList.remove('active');
     });
-    
-    // Show selected section
+
     document.getElementById(`${section}-section`).style.display = 'block';
-    event.target.classList.add('active');
-    
-    // Load data for section
+    if (trigger) {
+        trigger.classList.add('active');
+    } else {
+        const activeLink = document.querySelector(`.nav-link[data-section="${section}"]`);
+        if (activeLink) activeLink.classList.add('active');
+    }
+
     if (section === 'dashboard') {
         loadDashboard();
     } else if (section === 'accounts') {
@@ -177,25 +178,25 @@ function updateTokensChart(tokensStats) {
                 {
                     label: '输入 Tokens',
                     data: inputTokensData,
-                    borderColor: 'rgb(75, 192, 192)',
-                    backgroundColor: 'rgba(75, 192, 192, 0.1)',
-                    tension: 0.1,
+                    borderColor: '#5bc7c8',
+                    backgroundColor: 'rgba(91, 199, 200, 0.14)',
+                    tension: 0.34,
                     fill: true
                 },
                 {
                     label: '输出 Tokens',
                     data: outputTokensData,
-                    borderColor: 'rgb(255, 99, 132)',
-                    backgroundColor: 'rgba(255, 99, 132, 0.1)',
-                    tension: 0.1,
+                    borderColor: '#ef8baa',
+                    backgroundColor: 'rgba(239, 139, 170, 0.14)',
+                    tension: 0.34,
                     fill: true
                 },
                 {
                     label: '总 Tokens',
                     data: totalTokensData,
-                    borderColor: 'rgb(54, 162, 235)',
-                    backgroundColor: 'rgba(54, 162, 235, 0.1)',
-                    tension: 0.1,
+                    borderColor: '#7b68ee',
+                    backgroundColor: 'rgba(123, 104, 238, 0.14)',
+                    tension: 0.34,
                     fill: true
                 }
             ]
@@ -206,8 +207,18 @@ function updateTokensChart(tokensStats) {
             plugins: {
                 legend: {
                     position: 'top',
+                    labels: {
+                        usePointStyle: true,
+                        boxWidth: 10,
+                        color: '#6d6383',
+                        padding: 18
+                    }
                 },
                 tooltip: {
+                    backgroundColor: 'rgba(45, 35, 64, 0.92)',
+                    titleColor: '#ffffff',
+                    bodyColor: '#f7f3ff',
+                    padding: 12,
                     callbacks: {
                         label: function(context) {
                             return context.dataset.label + ': ' + formatNumber(context.parsed.y);
@@ -216,9 +227,21 @@ function updateTokensChart(tokensStats) {
                 }
             },
             scales: {
+                x: {
+                    grid: {
+                        display: false
+                    },
+                    ticks: {
+                        color: '#9086a6'
+                    }
+                },
                 y: {
                     beginAtZero: true,
+                    grid: {
+                        color: 'rgba(126, 106, 170, 0.12)'
+                    },
                     ticks: {
+                        color: '#9086a6',
                         callback: function(value) {
                             return formatLargeNumber(value);
                         }
@@ -237,46 +260,51 @@ function updateAccountUsageTable(accountUsageStats) {
     const accounts = accountUsageStats.accounts || [];
     
     if (accounts.length === 0) {
-        container.innerHTML = '<p style="color: #666; padding: 1rem;">暂无使用数据</p>';
+        container.innerHTML = '<div class="card empty-state">最近 7 天还没有账号使用数据。</div>';
         return;
     }
     
     const tableHtml = `
-        <table class="usage-table" style="width: 100%; border-collapse: collapse;">
-            <thead>
-                <tr>
-                    <th>账号名称</th>
-                    <th>状态</th>
-                    <th>输入 Tokens</th>
-                    <th>输出 Tokens</th>
-                    <th>总 Tokens</th>
-                    <th>请求数</th>
-                    <th>总请求数（全部）</th>
-                    <th>最后使用</th>
-                </tr>
-            </thead>
-            <tbody>
-                ${accounts.map(acc => `
+        <div class="data-table-wrap">
+            <table class="data-table">
+                <thead>
                     <tr>
-                        <td><strong>${acc.account_name}</strong></td>
-                        <td>
-                            <span class="status-badge ${acc.is_active ? 'status-active' : 'status-inactive'}">
-                                ${acc.is_active ? '活跃' : '停用'}
-                            </span>
-                            <span class="status-badge ${acc.is_healthy ? 'status-healthy' : 'status-inactive'}" style="margin-left: 0.5rem;">
-                                ${acc.is_healthy ? '健康' : '异常'}
-                            </span>
-                        </td>
-                        <td><span class="token-badge">${formatNumber(acc.input_tokens)}</span></td>
-                        <td><span class="token-badge">${formatNumber(acc.output_tokens)}</span></td>
-                        <td><strong>${formatNumber(acc.total_tokens)}</strong></td>
-                        <td>${formatNumber(acc.requests)}</td>
-                        <td>${formatNumber(acc.total_requests_all_time)}</td>
-                        <td>${acc.last_used ? new Date(acc.last_used).toLocaleString('zh-CN') : '从未使用'}</td>
+                        <th>账号名称</th>
+                        <th>状态</th>
+                        <th>输入 Tokens</th>
+                        <th>输出 Tokens</th>
+                        <th>总 Tokens</th>
+                        <th>请求数</th>
+                        <th>累计请求</th>
+                        <th>最后使用</th>
                     </tr>
-                `).join('')}
-            </tbody>
-        </table>
+                </thead>
+                <tbody>
+                    ${accounts.map(acc => `
+                        <tr>
+                            <td>
+                                <span class="table-primary">${acc.account_name}</span>
+                                <span class="table-meta">最近 7 天贡献明细</span>
+                            </td>
+                            <td>
+                                <span class="status-badge ${acc.is_active ? 'status-active' : 'status-inactive'}">
+                                    ${acc.is_active ? '活跃' : '停用'}
+                                </span>
+                                <span class="status-badge ${acc.is_healthy ? 'status-healthy' : 'status-inactive'}" style="margin-left: 0.5rem;">
+                                    ${acc.is_healthy ? '健康' : '异常'}
+                                </span>
+                            </td>
+                            <td><span class="token-badge">${formatNumber(acc.input_tokens)}</span></td>
+                            <td><span class="token-badge">${formatNumber(acc.output_tokens)}</span></td>
+                            <td><span class="table-primary">${formatNumber(acc.total_tokens)}</span></td>
+                            <td>${formatNumber(acc.requests)}</td>
+                            <td>${formatNumber(acc.total_requests_all_time)}</td>
+                            <td>${acc.last_used ? new Date(acc.last_used).toLocaleString('zh-CN') : '从未使用'}</td>
+                        </tr>
+                    `).join('')}
+                </tbody>
+            </table>
+        </div>
     `;
     
     container.innerHTML = tableHtml;
@@ -286,41 +314,52 @@ function updateAccountUsageTable(accountUsageStats) {
 async function loadAccounts() {
     try {
         const accounts = await fetchWithAuth(`${API_BASE}/admin/accounts`).then(r => r.json());
+        if (!accounts.length) {
+            document.getElementById('accounts-table').innerHTML = '<div class="empty-state">账号池还是空的，可以先上传 JSON 或手工添加一个账号。</div>';
+            return;
+        }
         const tableHtml = `
-            <table>
-                <thead>
-                    <tr>
-                        <th>名称</th>
-                        <th>状态</th>
-                        <th>健康</th>
-                        <th>请求数</th>
-                        <th>Token数</th>
-                        <th>最后使用</th>
-                        <th>操作</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    ${accounts.map(acc => `
+            <div class="data-table-wrap">
+                <table class="data-table">
+                    <thead>
                         <tr>
-                            <td>${acc.name}</td>
-                            <td><span class="status-badge ${acc.is_active ? 'status-active' : 'status-inactive'}">
-                                ${acc.is_active ? '活跃' : '停用'}
-                            </span></td>
-                            <td><span class="status-badge ${acc.is_healthy ? 'status-healthy' : 'status-inactive'}">
-                                ${acc.is_healthy ? '健康' : '异常'}
-                            </span></td>
-                            <td>${acc.total_requests || 0}</td>
-                            <td>${acc.total_tokens || 0}</td>
-                            <td>${acc.last_used ? new Date(acc.last_used).toLocaleString() : '-'}</td>
-                            <td>
-                                <button class="btn btn-primary" onclick="refreshAccountToken(${acc.id})" style="margin-right: 0.5rem;">刷新Token</button>
-                                <button class="btn" onclick="viewAccountStats(${acc.id})" style="margin-right: 0.5rem;">统计</button>
-                                <button class="btn btn-danger" onclick="deleteAccount(${acc.id})">删除</button>
-                            </td>
+                            <th>名称</th>
+                            <th>状态</th>
+                            <th>健康</th>
+                            <th>请求数</th>
+                            <th>Token 数</th>
+                            <th>最后使用</th>
+                            <th>操作</th>
                         </tr>
-                    `).join('')}
-                </tbody>
-            </table>
+                    </thead>
+                    <tbody>
+                        ${accounts.map(acc => `
+                            <tr>
+                                <td>
+                                    <span class="table-primary">${acc.name}</span>
+                                    <span class="table-meta">ID: ${acc.id}</span>
+                                </td>
+                                <td><span class="status-badge ${acc.is_active ? 'status-active' : 'status-inactive'}">
+                                    ${acc.is_active ? '活跃' : '停用'}
+                                </span></td>
+                                <td><span class="status-badge ${acc.is_healthy ? 'status-healthy' : 'status-inactive'}">
+                                    ${acc.is_healthy ? '健康' : '异常'}
+                                </span></td>
+                                <td>${formatNumber(acc.total_requests || 0)}</td>
+                                <td>${formatNumber(acc.total_tokens || 0)}</td>
+                                <td>${acc.last_used ? new Date(acc.last_used).toLocaleString('zh-CN') : '从未使用'}</td>
+                                <td>
+                                    <div class="table-actions">
+                                        <button class="btn btn-primary" type="button" onclick="refreshAccountToken(${acc.id})">刷新 Token</button>
+                                        <button class="btn btn-secondary" type="button" onclick="viewAccountStats(${acc.id})">统计</button>
+                                        <button class="btn btn-danger" type="button" onclick="deleteAccount(${acc.id})">删除</button>
+                                    </div>
+                                </td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            </div>
         `;
         document.getElementById('accounts-table').innerHTML = tableHtml;
     } catch (error) {
@@ -332,38 +371,49 @@ async function loadAccounts() {
 async function loadApiKeys() {
     try {
         const keys = await fetchWithAuth(`${API_BASE}/admin/api-keys`).then(r => r.json());
+        if (!keys.length) {
+            document.getElementById('keys-table').innerHTML = '<div class="empty-state">还没有 API 密钥，先创建一个新的访问凭证吧。</div>';
+            return;
+        }
         const tableHtml = `
-            <table>
-                <thead>
-                    <tr>
-                        <th>名称</th>
-                        <th>密钥</th>
-                        <th>状态</th>
-                        <th>请求数</th>
-                        <th>最后使用</th>
-                        <th>过期时间</th>
-                        <th>操作</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    ${keys.map(key => `
+            <div class="data-table-wrap">
+                <table class="data-table">
+                    <thead>
                         <tr>
-                            <td>${key.name}</td>
-                            <td><code>${key.key}</code></td>
-                            <td><span class="status-badge ${key.is_active ? 'status-active' : 'status-inactive'}">
-                                ${key.is_active ? '活跃' : '停用'}
-                            </span></td>
-                            <td>${key.total_requests}</td>
-                            <td>${key.last_used ? new Date(key.last_used).toLocaleString() : '-'}</td>
-                            <td>${key.expires_at ? new Date(key.expires_at).toLocaleString() : '永久'}</td>
-                            <td>
-                                ${key.is_active ? `<button class="btn" onclick="revokeKey(${key.id})">吊销</button>` : ''}
-                                <button class="btn btn-danger" onclick="deleteKey(${key.id})">删除</button>
-                            </td>
+                            <th>名称</th>
+                            <th>密钥</th>
+                            <th>状态</th>
+                            <th>请求数</th>
+                            <th>最后使用</th>
+                            <th>过期时间</th>
+                            <th>操作</th>
                         </tr>
-                    `).join('')}
-                </tbody>
-            </table>
+                    </thead>
+                    <tbody>
+                        ${keys.map(key => `
+                            <tr>
+                                <td>
+                                    <span class="table-primary">${key.name}</span>
+                                    <span class="table-meta">${key.is_admin ? '管理员密钥' : '普通密钥'}</span>
+                                </td>
+                                <td><span class="mono-chip"><code>${key.key}</code></span></td>
+                                <td><span class="status-badge ${key.is_active ? 'status-active' : 'status-inactive'}">
+                                    ${key.is_active ? '活跃' : '停用'}
+                                </span></td>
+                                <td>${formatNumber(key.total_requests || 0)}</td>
+                                <td>${key.last_used ? new Date(key.last_used).toLocaleString('zh-CN') : '从未使用'}</td>
+                                <td>${key.expires_at ? new Date(key.expires_at).toLocaleString('zh-CN') : '永久'}</td>
+                                <td>
+                                    <div class="table-actions">
+                                        ${key.is_active ? `<button class="btn btn-secondary" type="button" onclick="revokeKey(${key.id})">吊销</button>` : ''}
+                                        <button class="btn btn-danger" type="button" onclick="deleteKey(${key.id})">删除</button>
+                                    </div>
+                                </td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            </div>
         `;
         document.getElementById('keys-table').innerHTML = tableHtml;
     } catch (error) {
@@ -374,21 +424,24 @@ async function loadApiKeys() {
 // Modal functions
 function showAddAccountModal() {
     document.getElementById('add-account-modal').classList.add('show');
+    document.getElementById('add-account-modal').setAttribute('aria-hidden', 'false');
 }
 
 function showAddKeyModal() {
     document.getElementById('add-key-modal').classList.add('show');
+    document.getElementById('add-key-modal').setAttribute('aria-hidden', 'false');
 }
 
 function showUploadJsonModal() {
-    // 重置表单
     document.getElementById('upload-json-form').reset();
     document.getElementById('upload-json-alert').innerHTML = '';
     document.getElementById('upload-json-modal').classList.add('show');
+    document.getElementById('upload-json-modal').setAttribute('aria-hidden', 'false');
 }
 
 function closeModal(modalId) {
     document.getElementById(modalId).classList.remove('show');
+    document.getElementById(modalId).setAttribute('aria-hidden', 'true');
 }
 
 // Form submissions
@@ -695,22 +748,18 @@ document.querySelectorAll('.modal').forEach(modal => {
 
 // Load dashboard on page load
 document.addEventListener('DOMContentLoaded', () => {
-    // Check if API key exists
     const apiKey = getApiKey();
     if (!apiKey) {
-        // 重定向到登录页面
         window.location.href = '/admin/login';
         return;
     }
-    
-    // 验证 API key 是否有效
+
+    showSection('dashboard');
     fetchWithAuth(`${API_BASE}/admin/stats/accounts`)
         .then(() => {
-            // API key 有效，加载仪表盘
             loadDashboard();
         })
         .catch((error) => {
-            // API key 无效，重定向到登录页面
             console.error('API key validation failed:', error);
             clearApiKey();
             window.location.href = '/admin/login';

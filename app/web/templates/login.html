@@ -4,207 +4,130 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AMQ2API 登录</title>
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-        
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            padding: 1rem;
-        }
-        
-        .login-container {
-            background: white;
-            border-radius: 12px;
-            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
-            padding: 3rem;
-            max-width: 450px;
-            width: 100%;
-        }
-        
-        .login-header {
-            text-align: center;
-            margin-bottom: 2rem;
-        }
-        
-        .login-header h1 {
-            font-size: 2rem;
-            color: #2c3e50;
-            margin-bottom: 0.5rem;
-        }
-        
-        .login-header p {
-            color: #666;
-            font-size: 0.9rem;
-        }
-        
-        .form-group {
-            margin-bottom: 1.5rem;
-        }
-        
-        .form-group label {
-            display: block;
-            margin-bottom: 0.5rem;
-            font-weight: 500;
-            color: #555;
-        }
-        
-        .form-group input {
-            width: 100%;
-            padding: 0.75rem;
-            border: 2px solid #e0e0e0;
-            border-radius: 6px;
-            font-size: 1rem;
-            transition: border-color 0.3s;
-        }
-        
-        .form-group input:focus {
-            outline: none;
-            border-color: #667eea;
-        }
-        
-        .btn {
-            width: 100%;
-            padding: 0.75rem;
-            border: none;
-            border-radius: 6px;
-            font-size: 1rem;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.3s;
-        }
-        
-        .btn-primary {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-        }
-        
-        .btn-primary:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
-        }
-        
-        .alert {
-            padding: 1rem;
-            border-radius: 6px;
-            margin-bottom: 1rem;
-            display: none;
-        }
-        
-        .alert-error {
-            background: #fee;
-            color: #c33;
-            border: 1px solid #fcc;
-        }
-        
-        .alert.show {
-            display: block;
-        }
-        
-        .info-box {
-            background: #f0f7ff;
-            border: 1px solid #b3d9ff;
-            border-radius: 6px;
-            padding: 1rem;
-            margin-bottom: 1.5rem;
-            font-size: 0.9rem;
-            color: #0066cc;
-        }
-        
-        .info-box strong {
-            display: block;
-            margin-bottom: 0.5rem;
-        }
-    </style>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', path='suki-ui.css') }}">
 </head>
 <body>
-    <div class="login-container">
-        <div class="login-header">
-            <h1>🚀 AMQ2API</h1>
-            <p>管理面板登录</p>
+    <main class="login-page">
+        <div class="login-shell">
+            <section class="login-hero glass-panel">
+                <div class="login-kicker">Admin Access</div>
+                <h1 class="login-title">AMQ2API 管理后台登录</h1>
+                <p class="login-copy">使用管理员 API 密钥进入后台。</p>
+                <div class="feature-list">
+                    <article class="feature-item">
+                        <div class="feature-mark">01</div>
+                        <div>
+                            <p class="feature-title">账号管理</p>
+                            <p class="feature-copy">查看账号状态、刷新 Token、导入账号。</p>
+                        </div>
+                    </article>
+                    <article class="feature-item">
+                        <div class="feature-mark">02</div>
+                        <div>
+                            <p class="feature-title">调用统计</p>
+                            <p class="feature-copy">查看请求量和 Token 趋势。</p>
+                        </div>
+                    </article>
+                    <article class="feature-item">
+                        <div class="feature-mark">03</div>
+                        <div>
+                            <p class="feature-title">密钥管理</p>
+                            <p class="feature-copy">创建、禁用和删除 API 密钥。</p>
+                        </div>
+                    </article>
+                </div>
+            </section>
+
+            <section class="login-card glass-panel">
+                <h1>管理员登录</h1>
+                <p>输入管理员 API 密钥后进入后台。</p>
+
+                <div class="alert alert-error" id="error-alert" style="display: none;"></div>
+
+                <div class="helper-box">
+                    <strong>默认管理员密钥</strong>
+                    首次部署后可使用默认密钥登录，进入后台后建议尽快更换。
+                    <code>amq-admin-default-key-change-immediately</code>
+                </div>
+
+                <form id="login-form">
+                    <div class="form-group">
+                        <label for="api-key">管理员 API 密钥</label>
+                        <input
+                            class="field"
+                            type="password"
+                            id="api-key"
+                            name="api-key"
+                            placeholder="请输入管理员 API 密钥"
+                            required
+                            autofocus
+                        >
+                    </div>
+
+                    <div class="login-actions">
+                        <button type="submit" class="btn btn-primary">登录后台</button>
+                        <button type="button" class="text-button" onclick="document.getElementById('api-key').focus()">聚焦到密钥输入框</button>
+                    </div>
+                </form>
+            </section>
         </div>
-        
-        <div class="alert alert-error" id="error-alert"></div>
-        
-        <div class="info-box">
-            <strong>首次使用？</strong>
-            默认管理员 API 密钥：<code>amq-admin-default-key-change-immediately</code><br>
-            登录后请立即创建新的管理员密钥并删除默认密钥。
-        </div>
-        
-        <form id="login-form">
-            <div class="form-group">
-                <label for="api-key">管理员 API 密钥</label>
-                <input 
-                    type="password" 
-                    id="api-key" 
-                    name="api-key" 
-                    placeholder="请输入管理员 API 密钥"
-                    required
-                    autofocus
-                >
-            </div>
-            
-            <button type="submit" class="btn btn-primary">登录</button>
-        </form>
-    </div>
-    
+    </main>
+
     <script>
-        document.getElementById('login-form').addEventListener('submit', async (e) => {
+        const loginForm = document.getElementById('login-form');
+        const errorAlert = document.getElementById('error-alert');
+        const apiKeyInput = document.getElementById('api-key');
+
+        function showError(message) {
+            errorAlert.textContent = message;
+            errorAlert.style.display = 'block';
+        }
+
+        function hideError() {
+            errorAlert.textContent = '';
+            errorAlert.style.display = 'none';
+        }
+
+        loginForm.addEventListener('submit', async (e) => {
             e.preventDefault();
-            
-            const apiKey = document.getElementById('api-key').value.trim();
-            const errorAlert = document.getElementById('error-alert');
-            
+
+            const apiKey = apiKeyInput.value.trim();
+            hideError();
+
             if (!apiKey) {
-                errorAlert.textContent = '请输入 API 密钥';
-                errorAlert.classList.add('show');
+                showError('请输入 API 密钥');
                 return;
             }
-            
-            // 验证 API key 是否有效
+
             try {
                 const response = await fetch('/admin/stats/accounts', {
                     headers: {
                         'Authorization': `Bearer ${apiKey}`
                     }
                 });
-                
+
                 if (response.status === 401 || response.status === 403) {
-                    errorAlert.textContent = 'API 密钥无效或权限不足';
-                    errorAlert.classList.add('show');
+                    showError('API 密钥无效或权限不足');
                     return;
                 }
-                
+
                 if (!response.ok) {
                     throw new Error('验证失败');
                 }
-                
-                // 保存 API key 到 localStorage
+
                 localStorage.setItem('admin_api_key', apiKey);
-                
-                // 跳转到管理面板
                 window.location.href = '/admin/dashboard';
-                
             } catch (error) {
-                errorAlert.textContent = '验证失败，请检查网络连接';
-                errorAlert.classList.add('show');
+                showError('验证失败，请检查网络连接');
             }
         });
-        
-        // 检查是否已有 API key
+
         const savedKey = localStorage.getItem('admin_api_key');
         if (savedKey) {
-            // 自动填充
-            document.getElementById('api-key').value = savedKey;
+            apiKeyInput.value = savedKey;
         }
     </script>
 </body>
