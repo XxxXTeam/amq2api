@@ -29,133 +29,129 @@
             </div>
         </header>
 
-        <div class="dashboard-grid">
-            <aside class="sidebar glass-panel">
-                <h2 class="sidebar-title">导航</h2>
-                <p class="sidebar-copy">切换到需要的管理模块。</p>
-                <nav class="nav-list" aria-label="管理导航">
-                    <a href="#dashboard" class="nav-link active" data-section="dashboard" onclick="showSection('dashboard', this); return false;">
-                        <span class="nav-link-label">
-                            <span class="nav-link-title">仪表盘</span>
-                            <span class="nav-link-copy">总览系统状态</span>
-                        </span>
-                        <span class="nav-badge">01</span>
-                    </a>
-                    <a href="#accounts" class="nav-link" data-section="accounts" onclick="showSection('accounts', this); return false;">
-                        <span class="nav-link-label">
-                            <span class="nav-link-title">账号管理</span>
-                            <span class="nav-link-copy">账号池与 Token</span>
-                        </span>
-                        <span class="nav-badge">02</span>
-                    </a>
-                    <a href="#apikeys" class="nav-link" data-section="apikeys" onclick="showSection('apikeys', this); return false;">
-                        <span class="nav-link-label">
-                            <span class="nav-link-title">API 密钥</span>
-                            <span class="nav-link-copy">创建与禁用</span>
-                        </span>
-                        <span class="nav-badge">03</span>
-                    </a>
-                </nav>
-            </aside>
+        <nav class="top-nav glass-panel" aria-label="管理导航">
+            <div class="nav-list nav-list-top">
+                <a href="#dashboard" class="nav-link active" data-section="dashboard" onclick="showSection('dashboard', this); return false;">
+                    <span class="nav-link-label">
+                        <span class="nav-link-title">仪表盘</span>
+                        <span class="nav-link-copy">系统状态</span>
+                    </span>
+                    <span class="nav-badge">01</span>
+                </a>
+                <a href="#accounts" class="nav-link" data-section="accounts" onclick="showSection('accounts', this); return false;">
+                    <span class="nav-link-label">
+                        <span class="nav-link-title">账号管理</span>
+                        <span class="nav-link-copy">账号池与 Token</span>
+                    </span>
+                    <span class="nav-badge">02</span>
+                </a>
+                <a href="#apikeys" class="nav-link" data-section="apikeys" onclick="showSection('apikeys', this); return false;">
+                    <span class="nav-link-label">
+                        <span class="nav-link-title">API 密钥</span>
+                        <span class="nav-link-copy">创建与禁用</span>
+                    </span>
+                    <span class="nav-badge">03</span>
+                </a>
+            </div>
+        </nav>
 
-            <main class="content-column">
-                <section class="hero-panel glass-panel">
-                    <div class="hero-copy">
-                        <span class="eyebrow">系统概览</span>
-                        <h2 class="hero-title">查看账号、密钥与近 7 天调用趋势。</h2>
-                        <p class="hero-description">从这里快速进入常用管理操作。</p>
-                        <div class="hero-actions">
-                            <button class="btn btn-primary" type="button" onclick="showSection('accounts', document.querySelector('[data-section=&quot;accounts&quot;]'))">管理账号池</button>
-                            <button class="btn btn-secondary" type="button" onclick="showSection('apikeys', document.querySelector('[data-section=&quot;apikeys&quot;]'))">查看 API 密钥</button>
+        <main class="content-column content-column-full">
+            <section class="hero-panel glass-panel">
+                <div class="hero-copy">
+                    <span class="eyebrow">系统概览</span>
+                    <h2 class="hero-title">查看账号、密钥与近 7 天调用趋势。</h2>
+                    <p class="hero-description">常用操作放在前面，统计和表格保持清晰可读。</p>
+                    <div class="hero-actions">
+                        <button class="btn btn-primary" type="button" onclick="showSection('accounts', document.querySelector('[data-section=&quot;accounts&quot;]'))">管理账号池</button>
+                        <button class="btn btn-secondary" type="button" onclick="showSection('apikeys', document.querySelector('[data-section=&quot;apikeys&quot;]'))">查看 API 密钥</button>
+                    </div>
+                </div>
+            </section>
+
+            <section id="dashboard-section" class="section">
+                <div class="stats-grid">
+                    <article class="stat-card">
+                        <h3>总账号数</h3>
+                        <div class="value" id="total-accounts">-</div>
+                    </article>
+                    <article class="stat-card">
+                        <h3>活跃账号</h3>
+                        <div class="value" id="active-accounts">-</div>
+                    </article>
+                    <article class="stat-card">
+                        <h3>API 密钥数</h3>
+                        <div class="value" id="total-keys">-</div>
+                    </article>
+                    <article class="stat-card">
+                        <h3>总请求数</h3>
+                        <div class="value" id="total-requests">-</div>
+                    </article>
+                    <article class="stat-card">
+                        <h3>输入 Tokens</h3>
+                        <div class="value" id="total-input-tokens">-</div>
+                    </article>
+                    <article class="stat-card">
+                        <h3>输出 Tokens</h3>
+                        <div class="value" id="total-output-tokens">-</div>
+                    </article>
+                    <article class="stat-card">
+                        <h3>总 Tokens</h3>
+                        <div class="value" id="total-tokens">-</div>
+                    </article>
+                </div>
+
+                <article class="card chart-card">
+                    <div class="card-header">
+                        <div>
+                            <h3 class="card-title">Tokens 使用趋势</h3>
+                            <p class="card-copy">最近 7 天输入、输出与总量的节奏变化。</p>
                         </div>
                     </div>
-                </section>
+                    <canvas id="tokens-chart" aria-label="Tokens 趋势图表"></canvas>
+                </article>
 
-                <section id="dashboard-section" class="section">
-                    <div class="stats-grid">
-                        <article class="stat-card">
-                            <h3>总账号数</h3>
-                            <div class="value" id="total-accounts">-</div>
-                        </article>
-                        <article class="stat-card">
-                            <h3>活跃账号</h3>
-                            <div class="value" id="active-accounts">-</div>
-                        </article>
-                        <article class="stat-card">
-                            <h3>API 密钥数</h3>
-                            <div class="value" id="total-keys">-</div>
-                        </article>
-                        <article class="stat-card">
-                            <h3>总请求数</h3>
-                            <div class="value" id="total-requests">-</div>
-                        </article>
-                        <article class="stat-card">
-                            <h3>输入 Tokens</h3>
-                            <div class="value" id="total-input-tokens">-</div>
-                        </article>
-                        <article class="stat-card">
-                            <h3>输出 Tokens</h3>
-                            <div class="value" id="total-output-tokens">-</div>
-                        </article>
-                        <article class="stat-card">
-                            <h3>总 Tokens</h3>
-                            <div class="value" id="total-tokens">-</div>
-                        </article>
+                <article class="card">
+                    <div class="card-header">
+                        <div>
+                            <h3 class="card-title">账号使用统计</h3>
+                            <p class="card-copy">最近 7 天活跃账号的调用贡献与状态分布。</p>
+                        </div>
                     </div>
+                    <div id="account-usage-table"></div>
+                </article>
+            </section>
 
-                    <article class="card chart-card">
-                        <div class="card-header">
-                            <div>
-                                <h3 class="card-title">Tokens 使用趋势</h3>
-                                <p class="card-copy">最近 7 天输入、输出与总量的节奏变化。</p>
-                            </div>
+            <section id="accounts-section" class="section" style="display: none;">
+                <article class="card">
+                    <div class="card-header">
+                        <div>
+                            <h3 class="card-title">账号池管理</h3>
+                            <p class="card-copy">导入、添加、刷新和查看账号状态。</p>
                         </div>
-                        <canvas id="tokens-chart" aria-label="Tokens 趋势图表"></canvas>
-                    </article>
+                        <div class="card-actions">
+                            <button class="btn btn-success" type="button" onclick="showUploadJsonModal()">上传 JSON</button>
+                            <button class="btn btn-primary" type="button" onclick="showAddAccountModal()">添加账号</button>
+                        </div>
+                    </div>
+                    <div id="accounts-table"></div>
+                </article>
+            </section>
 
-                    <article class="card">
-                        <div class="card-header">
-                            <div>
-                                <h3 class="card-title">账号使用统计</h3>
-                                <p class="card-copy">最近 7 天活跃账号的调用贡献与状态分布。</p>
-                            </div>
+            <section id="apikeys-section" class="section" style="display: none;">
+                <article class="card">
+                    <div class="card-header">
+                        <div>
+                            <h3 class="card-title">API 密钥管理</h3>
+                            <p class="card-copy">管理访问密钥、权限和有效期。</p>
                         </div>
-                        <div id="account-usage-table"></div>
-                    </article>
-                </section>
-
-                <section id="accounts-section" class="section" style="display: none;">
-                    <article class="card">
-                        <div class="card-header">
-                            <div>
-                                <h3 class="card-title">账号池管理</h3>
-                                <p class="card-copy">导入、添加、刷新和查看账号状态。</p>
-                            </div>
-                            <div class="card-actions">
-                                <button class="btn btn-success" type="button" onclick="showUploadJsonModal()">上传 JSON</button>
-                                <button class="btn btn-primary" type="button" onclick="showAddAccountModal()">添加账号</button>
-                            </div>
+                        <div class="card-actions">
+                            <button class="btn btn-primary" type="button" onclick="showAddKeyModal()">创建密钥</button>
                         </div>
-                        <div id="accounts-table"></div>
-                    </article>
-                </section>
-
-                <section id="apikeys-section" class="section" style="display: none;">
-                    <article class="card">
-                        <div class="card-header">
-                            <div>
-                                <h3 class="card-title">API 密钥管理</h3>
-                                <p class="card-copy">管理访问密钥、权限和有效期。</p>
-                            </div>
-                            <div class="card-actions">
-                                <button class="btn btn-primary" type="button" onclick="showAddKeyModal()">创建密钥</button>
-                            </div>
-                        </div>
-                        <div id="keys-table"></div>
-                    </article>
-                </section>
-            </main>
-        </div>
+                    </div>
+                    <div id="keys-table"></div>
+                </article>
+            </section>
+        </main>
     </div>
 
     <div id="add-account-modal" class="modal" aria-hidden="true">
