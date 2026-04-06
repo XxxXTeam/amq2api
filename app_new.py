@@ -176,13 +176,13 @@ async def root():
 @app.get("/admin/login", response_class=HTMLResponse)
 async def admin_login(request: Request):
     """登录页面（不需要认证）"""
-    return templates.TemplateResponse("login.html", {"request": request})
+    return templates.TemplateResponse(request, "login.html")
 
 
 @app.get("/admin/dashboard", response_class=HTMLResponse)
 async def admin_dashboard(request: Request):
     """管理面板页面（客户端处理认证）"""
-    return templates.TemplateResponse("admin.html", {"request": request})
+    return templates.TemplateResponse(request, "admin.html")
 
 
 @app.get("/v1/models")
