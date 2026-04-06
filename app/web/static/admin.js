@@ -111,6 +111,18 @@ function formatLargeNumber(num) {
     return num.toString();
 }
 
+async function readJsonSafely(response) {
+    const text = await response.text();
+    if (!text) return null;
+
+    try {
+        return JSON.parse(text);
+    } catch (error) {
+        console.warn('Failed to parse JSON response:', error);
+        return null;
+    }
+}
+
 // Load dashboard stats
 async function loadDashboard() {
     try {
@@ -558,14 +570,14 @@ document.getElementById('upload-json-form').addEventListener('submit', async (e)
             window.location.href = '/admin/login';
             return;
         }
-        
-        const result = await response.json();
-        
+
+        const result = await readJsonSafely(response);
+
         if (response.ok) {
-            const importedAccounts = Array.isArray(result.accounts) ? result.accounts : (result.account ? [result.account] : []);
-            const failedRefreshes = Array.isArray(result.token_refresh?.results)
+            const importedAccounts = Array.isArray(result?.accounts) ? result.accounts : (result?.account ? [result.account] : []);
+            const failedRefreshes = Array.isArray(result?.token_refresh?.results)
                 ? result.token_refresh.results.filter(item => !item.success).length
-                : (result.token_refresh?.success === false ? 1 : 0);
+                : (result?.token_refresh?.success === false ? 1 : 0);
 
             alertDiv.innerHTML = '<div class="alert alert-success">账号添加成功，正在同步列表...</div>';
             closeModal('upload-json-modal');
@@ -575,6 +587,10 @@ document.getElementById('upload-json-form').addEventListener('submit', async (e)
             setTimeout(() => {
                 if (importedAccounts.length <= 1) {
                     const account = importedAccounts[0];
+                    if (!account) {
+                        alert('账号已成功导入。');
+                        return;
+                    }
                     const tokenMessage = failedRefreshes > 0 ? 'Token 刷新失败，请手动检查。' : 'Token 已自动刷新！';
                     alert(`账号添加成功！\n\n账号名称: ${account.name}\n账号ID: ${account.id}\n\n${tokenMessage}`);
                     return;
@@ -586,7 +602,7 @@ document.getElementById('upload-json-form').addEventListener('submit', async (e)
                 alert(`批量导入成功！\n\n导入数量: ${importedAccounts.length}\n\n${tokenSummary}`);
             }, 500);
         } else {
-            alertDiv.innerHTML = `<div class="alert alert-error">添加失败: ${result.detail || '未知错误'}</div>`;
+            alertDiv.innerHTML = `<div class="alert alert-error">添加失败: ${result?.detail || '未知错误'}</div>`;
         }
     } catch (error) {
         console.error('Upload error:', error);
