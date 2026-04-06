@@ -204,9 +204,9 @@ async def list_models():
     
     models = [
         # 官方支持的 Claude 模型
-        create_model("claude-3.5-sonnet"),
-        create_model("claude-3.7-sonnet"),
-        create_model("claude-4-sonnet"),
+        create_model("claude-sonnet-4.5"),
+        create_model("claude-sonnet-4"),
+        create_model("claude-haiku-4.5"),
     ]
     
     return {
